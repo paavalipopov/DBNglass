@@ -18,7 +18,9 @@ def default_HPs(cfg: DictConfig):
         "hidden_size": 160,
         "num_layers": 0,
         "lr": 0.005,
-        "input_size": cfg.dataset.data_info.main.data_shape[2],
+        "input_size": cfg.dataset.data_info.main.data_shape[
+            2
+        ],  # data_shape: [batch_size, time_length, input_feature_size]
         "output_size": cfg.dataset.data_info.main.n_classes,
     }
     return OmegaConf.create(model_cfg)
@@ -30,7 +32,9 @@ def random_HPs(cfg: DictConfig):
         "hidden_size": randint(32, 256),
         "num_layers": randint(0, 4),
         "lr": 10 ** uniform(-4, -3),
-        "input_size": cfg.dataset.data_info.main.data_shape[2],
+        "input_size": cfg.dataset.data_info.main.data_shape[
+            2
+        ],  # data_shape: [batch_size, time_length, input_feature_size]
         "output_size": cfg.dataset.data_info.main.n_classes,
     }
     return OmegaConf.create(model_cfg)
@@ -78,7 +82,7 @@ class RearrangedMLP(nn.Module):
             nn.ReLU(),
             nn.Dropout(p=dropout),
         ]
-        # inter blocks
+        # inter blocks: default HPs model has none of them
         for _ in range(num_layers):
             layers.append(
                 nn.Sequential(

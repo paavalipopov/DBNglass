@@ -13,7 +13,7 @@ allow_test_ds: True # optional (default: False), True, False
 tunable: True # optional (default: True), True, False;
 # if you want to be able to tune the model in 'tune' mode, set to True. 
 # 'True' requires 'random_HPs(cfg)' defined in the model's module.
-# if you want the tuning process to abort without starting, set to False.
+# if you set it to False, the tuning runs will abort authomatically.
 # see 'src.model.get_tune_config' and 'src.models.mlp.random_HPs' for reference.
 
 default_HP: False # optional (default: False), True, False; 
