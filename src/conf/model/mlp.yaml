@@ -1,4 +1,4 @@
-name: rearranged_mlp # must create '{name}.py' module in src/models with:
+name: mlp # must create '{name}.py' module in src/models with:
 # 1. 'get_model(cfg, model_cfg)' defined. 'model_cfg' normally stores HPs and input shape info
 # 2. 'random_HPs(cfg)' and/or 'default_HPs(cfg)' defined. 'cfg' normally stores dataset shape info
 # see 'src.model.model_factory' and 'src.models.mlp' module for reference
