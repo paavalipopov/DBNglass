@@ -1,33 +1,56 @@
-# Requirements
+# 0. If you just want the Mean MLP model source code
+Go to `src/models/mlp.py`.
+`MeanMLP` and `default_HPs` is what you need.
 
+# 1. Requirements
 ```bash
 conda create -n mlp_nn python=3.9
 conda activate mlp_nn
-- if mac user:
-    conda install pytorch::pytorch torchvision torchaudio -c pytorch
-- else:
-    conda install pytorch torchvision torchaudio pytorch-cuda=11.3 -c pytorch -c nvidia
+conda install pytorch torchvision torchaudio pytorch-cuda=11.3 -c pytorch -c nvidia
 pip install -r requirements.txt
 ```
 
-# Examples:
+# 2. Reproducing the results
+## 1. Figures 3 and 4: general and transfer classification comparisons
+```bash
+DATASETS=('fbirn' 'bsnip' 'cobre' 'abide_869' 'oasis' 'adni' 'hcp' 'ukb' 'ukb_age_bins' 'fbirn_roi' 'abide_roi' 'hcp_roi_752')
+MODELS=('mlp' 'lstm' 'pe_transformer' 'milc' 'dice' 'bnt' 'fbnetgen' 'brainnetcnn' 'lr')
+for dataset in "${DATASETS[@]}"; do 
+    for model in "${MODELS[@]}"; do 
+        PYTHONPATH=. python scripts/run_experiments.py mode=exp dataset=$dataset model=$model prefix=general ++model.default_HP=True
+    done; 
+done
 ```
-PYTHONPATH=. python scripts/run_experiments.py mode=tune dataset=fbirn model=rearranged_mlp prefix=test wandb_offline=True
-PYTHONPATH=. python scripts/run_experiments.py mode=exp dataset=fbirn model=rearranged_mlp prefix=test wandb_offline=True
+## 2. Figures 5 and 6: reshuffling experiments and additional data pre-processing tests
+```bash
+DATASETS=('hcp' 'hcp_roi_752' 'hcp_schaefer' 'hcp_non_mni_2' 'hcp_mni_3' 'ukb')
+MODELS=('mlp' 'lstm' 'mean_lstm' 'pe_transformer' 'mean_pe_transformer')
+
+for model in "${MODELS[@]}"; do 
+    PYTHONPATH=. python scripts/run_experiments.py mode=exp dataset='hcp_time' model=$model prefix=additional ++model.default_HP=True
+    for dataset in "${DATASETS[@]}"; do 
+        PYTHONPATH=. python scripts/run_experiments.py mode=exp dataset=$dataset model=$model prefix=additional ++model.default_HP=True
+        PYTHONPATH=. python scripts/run_experiments.py mode=exp dataset=$dataset model=$model prefix=additional ++model.default_HP=True permute=Multiple
+    done; 
+done
 ```
+## 3. Plotting the results
+Plotting scripts can be found at `scripts/plot_figures.ipynb`.
+Data loading scripts rely on fetching the results from WandB. If you set WandB offline mode while running the experiments, you'll need to load the csv files from the experiment folders in `assets/logs`.
+
 
 # `scripts/run_experiments.py` options:
 ## Required:
 - `mode`: 
     - `tune` - tune mode: run multiple experiments with different hyperparams
-    - `exp` - experiment mode: run experiments with best hyperparams found in the `tune` mode
+    - `exp` - experiment mode: run experiments with the best hyperparams found in the `tune` mode, or with default hyperparams `default_HPs` is set to `True`
 
 - `model`: model for the experiment. Models' config files can be found at `src/conf/model`, and their sourse code is located at `src/models`
-    - `rearranged_mlp` - our hero, TS model
+    - `mlp` - our hero, TS model
     - `lstm` - classic LSTM model for classification, TS model (not used in the paper)
     - `mean_lstm` - `lstm` with LSTM output embeddings averaging, TS model
     - `pe_transformer` - BERT-inspired model, uses transformer endocder, TS model (not used in the paper)
-    - `mean_pe_transformer` - `tansformer` with encoder output averaging, TS model
+    - `mean_pe_transformer` - `pe_transformer` with encoder output averaging, TS model
 
     - `dice` - TS model, https://www.sciencedirect.com/science/article/pii/S1053811922008588?via%3Dihub
     - `milc` - TS model, https://arxiv.org/abs/2007.16041 
