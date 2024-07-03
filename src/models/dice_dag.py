@@ -20,13 +20,23 @@ def get_criterion(cfg: DictConfig, model_cfg: DictConfig):
 class DICEregCEloss:
     """Cross-entropy loss with model regularization"""
 
-    def __init__(self, model_cfg):
+    def __init__(self, model_cfg, lambda1 = 0.01):
         self.ce_loss = nn.CrossEntropyLoss()
 
         self.reg_param = model_cfg.reg_param
 
+        self.lambda1 = lambda1 # Sparsity loss weight
+
     def __call__(self, logits, target, model, device, DNC, DNCs):
         ce_loss = self.ce_loss(logits, target)
+
+        # DAG-ness loss - a differentiabe measure of how distant the given DNC is from DAG space
+        E = torch.linalg.matrix_exp(DNC * DNC) # (Zheng et al. 2018)
+        dag_loss = torch.mean(torch.vmap(torch.trace)(E)) - DNC.shape[1]
+
+        # Sparsity loss on DNC
+        sparse_loss = self.lambda1 * torch.mean(torch.sum(torch.abs(DNC), dim=(1,2)))
+        # sparse_loss = 0 
 
         reg_loss = torch.zeros(1).to(device)
 
@@ -38,7 +48,7 @@ class DICEregCEloss:
             if "bias" not in name:
                 reg_loss += self.reg_param * torch.norm(param, p=1)
 
-        loss = ce_loss + reg_loss
+        loss = ce_loss + dag_loss + sparse_loss + reg_loss
         return loss
 
 
