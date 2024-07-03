@@ -209,8 +209,8 @@ class BasicTrainer:
                 data, target = data.to(self.device), target.to(self.device)
                 total_size += data.shape[0]
 
-                logits = self.model(data)
-                loss = self.criterion(logits, target, self.model, self.device)
+                logits, DNC, DNCs = self.model(data)
+                loss = self.criterion(logits, target, self.model, self.device, DNC, DNCs)
                 score = torch.softmax(logits, dim=-1)
 
                 all_scores.append(score.cpu().detach().numpy())
@@ -221,6 +221,9 @@ class BasicTrainer:
                     self.optimizer.zero_grad()
                     loss.backward()
                     self.optimizer.step()
+                elif ds_name == "test":
+                    torch.save(DNC, f"{self.save_path}/DNC.pt")
+                    torch.save(DNCs, f"{self.save_path}/DNCs.pt")
 
         average_time = (time.time() - start_time) / total_size
         average_loss = total_loss / total_size
