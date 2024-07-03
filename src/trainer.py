@@ -222,6 +222,7 @@ class BasicTrainer:
                     loss.backward()
                     self.optimizer.step()
                 elif ds_name == "test":
+                    torch.save(target, f"{self.save_path}/labels.pt")
                     torch.save(DNC, f"{self.save_path}/DNC.pt")
                     torch.save(DNCs, f"{self.save_path}/DNCs.pt")
 

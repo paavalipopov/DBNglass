@@ -145,7 +145,6 @@ class MultivariateTSModel(nn.Module):
         
         # Initialize hidden state
         h_0 = torch.zeros(B, 1, self.num_components, self.hidden_dim, device=x.device)
-        
         alignment_matrices = []
         
         for t in range(T):
@@ -157,7 +156,7 @@ class MultivariateTSModel(nn.Module):
             h_0 = h_0.reshape(1, B, self.num_components, self.hidden_dim).permute(1, 0, 2, 3) # (batch_size, 1, num_components, hidden_dim)
 
             # Reshape h_0 for self-attention
-            h_0_reshaped = h_0.squeeze()  # (batch_size, num_components, hidden_dim)
+            h_0_reshaped = h_0.squeeze(1)  # (batch_size, num_components, hidden_dim)
             
             # Apply self-attention
             attn_out, attn_output_weights = self.attention(h_0_reshaped, h_0_reshaped, h_0_reshaped)
