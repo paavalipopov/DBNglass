@@ -6,8 +6,8 @@ preserve_checkpoints: True
 # max_epochs: 20
 # batch_size: 64
 # patience: 30
-n_trials: 10
+n_trials: 1
 n_splits: 5
 max_epochs: 400
 batch_size: 64
-patience: 30
+patience: 15
