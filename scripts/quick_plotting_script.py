@@ -25,7 +25,7 @@ for row_idx, (title, path) in enumerate(paths.items()):
     
     for col_idx in range(n_samples_to_plot):
         vlim = max(abs(array[col_idx].min()), abs(array[col_idx].max()))
-        sns.heatmap(array[col_idx], ax=axes[row_idx, col_idx], cmap='seismic', cbar=True, vmin=-vlim, vmax=vlim)
+        sns.heatmap(array[col_idx], ax=axes[row_idx, col_idx], cmap='seismic', cbar=True, vmin=-vlim, vmax=vlim, square=True)
         axes[row_idx, col_idx].set_xticks([])
         axes[row_idx, col_idx].set_yticks([])
     
