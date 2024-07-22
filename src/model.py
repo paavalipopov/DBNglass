@@ -63,9 +63,7 @@ def get_best_config(cfg: DictConfig, k=None):
         # 1. try to load config from cfg.model_cfg_path.
         # Note: dataset shape information is loaded as 'data_info' key,
         # just in case
-        assert cfg.model_cfg_path.endswith(
-            ".yaml", ".json"
-        ), f"'{cfg.model_cfg_path}' \
+        assert cfg.model_cfg_path.endswith(".json") or cfg.model_cfg_path.endswith(".yaml"), f"'{cfg.model_cfg_path}' \
             is not json or yaml file, aborting"
         try:
             with open(cfg.model_cfg_path, "r", encoding="utf8") as f:
