@@ -278,12 +278,12 @@ class SelfAttention(nn.Module):
         scores = torch.bmm(queries, keys.transpose(1, 2))
 
         # attention = F.softmax(scores, dim=2)
-        attention = F.tanh(scores)
-        eigenvals = self.compute_eigenvals(attention, 10)
+        eigenvals = self.compute_eigenvals(scores, 10)
         if not self.track_grads:
             eigenvals = eigenvals.detach()
+        scores = scores * 0.99 / eigenvals
+        attention = F.tanh(scores)
 
-        attention = attention * 0.9 / eigenvals
         weighted = torch.bmm(attention, values)
 
         return weighted, attention

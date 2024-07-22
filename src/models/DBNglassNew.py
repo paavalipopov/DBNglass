@@ -62,7 +62,6 @@ def default_HPs(cfg: DictConfig):
         "attention": {
             "hidden_dim": 32,
             "track_grads": True,
-            "use_old_PI_method": False
         },
         "reg_param": 1e-6,
         "include_dag": True,
@@ -120,7 +119,6 @@ class MultivariateTSModel(nn.Module):
             input_dim=hidden_dim, 
             hidden_dim=model_cfg.attention.hidden_dim, 
             track_grads=model_cfg.attention.track_grads,
-            use_old_PI_method=model_cfg.attention.use_old_PI_method,
         )
 
         # Global Temporal Attention 
@@ -254,14 +252,12 @@ class MultivariateTSModel(nn.Module):
 
 
 class SelfAttention(nn.Module):
-    def __init__(self, input_dim, hidden_dim, track_grads, use_old_PI_method):
+    def __init__(self, input_dim, hidden_dim, track_grads):
         super(SelfAttention, self).__init__()
         self.input_dim = input_dim
         self.track_grads = track_grads
 
         self.compute_eigenvals = compute_eigenvals
-        if use_old_PI_method:
-            self.compute_eigenvals = compute_eigenvals_old
 
 
         self.query = nn.Linear(input_dim, hidden_dim)
@@ -279,89 +275,22 @@ class SelfAttention(nn.Module):
 
         # attention = F.softmax(scores, dim=2)
         attention = F.tanh(scores)
-        eigenvals = self.compute_eigenvals(attention, 10)
+        eigenvals = self.compute_eigenvals(attention)
         if not self.track_grads:
             eigenvals = eigenvals.detach()
 
-        attention = attention * 0.9 / eigenvals
+        attention = attention / eigenvals
         weighted = torch.bmm(attention, values)
 
         return weighted, attention
 
-def compute_eigenvals(alignment_matrix, n_iterations):
+def compute_eigenvals(alignment_matrix):
     batch_n_samples = alignment_matrix.shape[0]
 
     eigvals = []
     for batch_idx in range(batch_n_samples):
         M = alignment_matrix[batch_idx]
-
-        # eigvect = PowerIter.apply(M, n_iterations)
-        eigvect = PowerIter.apply(M)
-        eigvals.append(torch.abs((eigvect.T @ M @ eigvect) / (eigvect.T @ eigvect)))
+        L = torch.linalg.eigvals(M)
+        eigvals.append(torch.max(torch.abs(L)))
 
     return torch.stack(eigvals).view(batch_n_samples, 1, 1)
-
-class PowerIter(torch.autograd.Function):
-    @staticmethod
-    def forward(ctx, matrix):
-        n_dim, _ = matrix.shape
-        device = matrix.device
-
-        ctx.max_iter = max_iter = 10
-        tol = 1e-2
-
-        M = matrix.clone().detach().requires_grad_(True)
-
-        x = torch.rand(n_dim, device=device)
-        for _ in range(max_iter):
-            f0 = M @ x / torch.linalg.norm(M @ x)
-            with torch.no_grad():
-                if torch.linalg.norm(f0 - x) / (1e-5 + torch.linalg.norm(f0)) < tol:
-                    break
-                x = f0
-
-        ctx.save_for_backward(M, x)
-        return x
-
-
-    @staticmethod
-    def backward(ctx, grad_output):
-        matrix, x = ctx.saved_tensors
-        max_iter = ctx.max_iter
-        tol = 1e-2
-
-        h = grad_output.clone().detach()
-
-        x.requires_grad_()
-
-        for k in range(max_iter):
-            with torch.enable_grad():
-                f0 = matrix @ x / torch.linalg.norm(matrix @ x)
-                grad_h = torch.autograd.grad(f0, x, grad_outputs=h, create_graph=True, retain_graph=True)[0]
-
-            with torch.no_grad():
-                if torch.norm(grad_h - h) / (1e-5 + torch.norm(grad_h)) < tol:
-                    # print("Backward converged at iteration ", k)
-                    break
-                h = grad_h
-
-        # Compute gradients with respect to input_tensor and layers
-        grad_input = torch.autograd.grad(f0, matrix, grad_outputs=grad_h, retain_graph=True)
-
-        return grad_input
-
-def compute_eigenvals_old(alignment_matrix, n_iterations):
-    batch_n_samples, n_dim, _ = alignment_matrix.shape
-    device = alignment_matrix.device
-
-    batch_of_lambdas = []
-    for batch_idx in range(batch_n_samples):
-        M = alignment_matrix[batch_idx]
-
-        x = torch.rand(n_dim, device=device)
-        for _ in range(n_iterations):
-            x = M @ x / torch.linalg.norm(M @ x)
-        
-        batch_of_lambdas.append(torch.abs((x.T @ M @ x) / (x.T @ x)))
-
-    return torch.stack(batch_of_lambdas).view(batch_n_samples, 1, 1)
