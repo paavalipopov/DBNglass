@@ -148,7 +148,7 @@ class MultivariateTSModel(nn.Module):
         self.clf = nn.Linear(num_components**2, output_size)
 
     def gta_attention(self, x, node_axis=1):
-        # x.shape: [batch_size; time_length; num_components * num_components]
+        # x.shape: [batch_size; time_length; input_feature_size * input_feature_size]
         x_readout = x.mean(node_axis, keepdim=True)
         x_readout = x * x_readout
 
@@ -168,10 +168,11 @@ class MultivariateTSModel(nn.Module):
             torch.save(dat, f"{path}/{basename}_{i}.pt")
 
     def forward(self, x):
-        # savepath = "/data/users2/ppopov1/glass_proj/scripts/debug2/"
+        savepath = "/data/users2/ppopov1/glass_proj/scripts/debug2/"
         B, T, _ = x.shape  # [batch_size, time_length, num_components]
         
-        # Apply embedding to the input
+        # Apply component-specific embeddings
+        # embedded = torch.stack([self.embeddings[i](x[:, :, i].unsqueeze(-1)) for i in range(self.num_components)], dim=1)
         if self.single_embed:
             x = x.permute(0, 2, 1)
             x = x.reshape(B * self.num_components, T, 1)
@@ -186,8 +187,11 @@ class MultivariateTSModel(nn.Module):
         
         # Initialize hidden state
         h_0 = torch.zeros(B, 1, self.num_components, self.hidden_dim, device=x.device)
+        torch.save(h_0, savepath+"h_init.pt")
 
         alignment_matrices = []
+        h_0_gru = []
+        h_0_attn = []
         
         for t in range(T):
             # Process one time step
@@ -196,19 +200,30 @@ class MultivariateTSModel(nn.Module):
             h_0 = h_0.permute(1, 0, 2, 3).reshape(1, B*self.num_components, self.hidden_dim) # (1, batch_size * num_components, hidden_dim)
             _, h_0 = self.gru(gru_input, h_0)
             h_0 = h_0.reshape(1, B, self.num_components, self.hidden_dim).permute(1, 0, 2, 3) # (batch_size, 1, num_components, hidden_dim)
+            h_0_gru.append(h_0)
 
             # Reshape h_0 for self-attention
             h_0_reshaped = h_0.squeeze(1)  # (batch_size, num_components, hidden_dim)
 
             # Apply self-attention
+            # attn_out, attn_output_weights = self.attention_old(h_0_reshaped, h_0_reshaped, h_0_reshaped)
+            # print("old shape", attn_output_weights.shape)
             attn_out, attn_output_weights = self.attention(h_0_reshaped)
+            # print("new shape", attn_output_weights.shape)
 
             # Update h_0 with attention output
             h_0 = attn_out.unsqueeze(1)
+            h_0_attn.append(h_0)
+
+            # h_0 = self.norm(h_0)
 
             alignment_matrices.append(attn_output_weights)
 
             if torch.any(torch.isnan(h_0)):
+                self.dump_data(alignment_matrices, savepath, "align_matrix")
+                self.dump_data(h_0_gru, savepath, "h_gru")
+                self.dump_data(h_0_attn, savepath, "h_attn")
+                
                 raise Exception(f"h_0 has nans at time point {t}")
             
         
@@ -242,6 +257,9 @@ class SelfAttention(nn.Module):
         self.input_dim = input_dim
         self.track_grads = track_grads
 
+        self.compute_eigenvals = compute_eigenvals
+
+
         self.query = nn.Linear(input_dim, hidden_dim)
         self.key = nn.Linear(input_dim, hidden_dim)
         self.value = spectral_norm(nn.Linear(input_dim, input_dim), n_power_iterations=5)
@@ -252,15 +270,26 @@ class SelfAttention(nn.Module):
         keys = self.key(x)
         values = self.value(x)
 
+        # scores = torch.bmm(queries, keys.transpose(1, 2))/(self.input_dim**2)
         scores = torch.bmm(queries, keys.transpose(1, 2))
 
-        attention = F.tanh(scores)
-        eigenvals = torch.linalg.eigvals(attention)
-        eigenvals = torch.max(torch.abs(eigenvals), dim=1)[0].view(x.shape[0], 1, 1)
+        eigenvals = self.compute_eigenvals(scores)
         if not self.track_grads:
             eigenvals = eigenvals.detach()
         attention = attention / eigenvals
+        attention = F.tanh(scores)
 
         weighted = torch.bmm(attention, values)
 
         return weighted, attention
+
+def compute_eigenvals(alignment_matrix):
+    batch_n_samples = alignment_matrix.shape[0]
+
+    eigvals = []
+    for batch_idx in range(batch_n_samples):
+        M = alignment_matrix[batch_idx]
+        L = torch.linalg.eigvals(M)
+        eigvals.append(torch.max(torch.abs(L)))
+
+    return torch.stack(eigvals).view(batch_n_samples, 1, 1)
