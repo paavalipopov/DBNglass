@@ -25,29 +25,20 @@ class RegCEloss:
 
     def __init__(self, model_cfg, lambda1 = 0.01):
         self.ce_loss = nn.CrossEntropyLoss()
+        self.sparsity_loss = nn.L1Loss()
 
         self.reg_param = model_cfg.reg_param
 
         self.lambda1 = lambda1 # Sparsity loss weight
 
-        self.include_dag = model_cfg.include_dag
-
     def __call__(self, logits, target, model, device, DNC, DNCs):
         ce_loss = self.ce_loss(logits, target)
 
-        if self.include_dag:
-            # DAG-ness loss - a differentiabe measure of how distant the given DNC is from DAG space
-            E = torch.linalg.matrix_exp(DNC * DNC) # (Zheng et al. 2018)
-            dag_loss = torch.mean(torch.vmap(torch.trace)(E)) - DNC.shape[1]
+        # Sparsity loss on DNC
+        sparse_loss = self.lambda1 * self.sparsity_loss(DNC, torch.zeros_like(DNC))
 
-            # Sparsity loss on DNC
-            sparse_loss = self.lambda1 * torch.mean(torch.sum(torch.abs(DNC), dim=(1,2)))
-
-            loss = ce_loss + dag_loss + sparse_loss
-            return loss
-
-        else:
-            return ce_loss
+        loss = ce_loss + sparse_loss
+        return loss
     
 
 
@@ -62,10 +53,11 @@ def default_HPs(cfg: DictConfig):
         "attention": {
             "hidden_dim": 32,
             "track_grads": True,
+            "use_tan": "none",
+            "use_gate": True,
         },
+
         "reg_param": 1e-6,
-        "include_dag": True,
-        # "lr": 2e-4,
         "lr": 4e-5,
         "input_size": cfg.dataset.data_info.main.data_shape[2],
         "output_size": cfg.dataset.data_info.main.n_classes,
@@ -119,6 +111,9 @@ class MultivariateTSModel(nn.Module):
             input_dim=hidden_dim, 
             hidden_dim=model_cfg.attention.hidden_dim, 
             track_grads=model_cfg.attention.track_grads,
+            use_tan=model_cfg.attention.use_tan,
+            use_gate=model_cfg.attention.use_gate,
+            n_components=self.num_components
         )
 
         # Global Temporal Attention 
@@ -206,16 +201,11 @@ class MultivariateTSModel(nn.Module):
             h_0_reshaped = h_0.squeeze(1)  # (batch_size, num_components, hidden_dim)
 
             # Apply self-attention
-            # attn_out, attn_output_weights = self.attention_old(h_0_reshaped, h_0_reshaped, h_0_reshaped)
-            # print("old shape", attn_output_weights.shape)
             attn_out, attn_output_weights = self.attention(h_0_reshaped)
-            # print("new shape", attn_output_weights.shape)
 
             # Update h_0 with attention output
             h_0 = attn_out.unsqueeze(1)
             h_0_attn.append(h_0)
-
-            # h_0 = self.norm(h_0)
 
             alignment_matrices.append(attn_output_weights)
 
@@ -229,34 +219,29 @@ class MultivariateTSModel(nn.Module):
         
         # Stack the alignment matrices
         alignment_matrices = torch.stack(alignment_matrices, dim=1)  # (batch_size, seq_len, num_components, num_components)
-
-        if torch.any(torch.isnan(alignment_matrices)):
-            print("alignment_matrices has nans")
         
         attn_input = alignment_matrices.reshape(B, T, -1) # [batch_size; time_length; num_components * num_components]
 
         DNC_flat = self.gta_attention(attn_input)
-
-        if torch.any(torch.isnan(DNC_flat)):
-            print("DNC_flat has nans")
         
         # 4. Pass learned graph to the classifier to get predictions
         logits = self.clf(DNC_flat)
         # logits.shape: [batch_size; n_classes]
-
-        if torch.any(torch.isnan(logits)):
-            print("logits has nans")
 
         return logits, DNC_flat.reshape(B, self.num_components, self.num_components), alignment_matrices
 
 
 
 class SelfAttention(nn.Module):
-    def __init__(self, input_dim, hidden_dim, track_grads):
+    def __init__(self, input_dim, hidden_dim, track_grads, use_tan, use_gate, n_components):
         super(SelfAttention, self).__init__()
         self.input_dim = input_dim
         self.track_grads = track_grads
+        self.use_tan = use_tan
+        self.use_gate = use_gate
 
+        if use_gate:
+            self.gate = Gate(n_components)
 
         self.query = nn.Linear(input_dim, hidden_dim)
         self.key = nn.Linear(input_dim, hidden_dim)
@@ -268,16 +253,39 @@ class SelfAttention(nn.Module):
         keys = self.key(x)
         values = self.value(x)
 
-        # scores = torch.bmm(queries, keys.transpose(1, 2))/(self.input_dim**2)
         scores = torch.bmm(queries, keys.transpose(1, 2))
+
+        if self.use_tan == "before":
+            scores = F.tanh(scores)
 
         eigenvals = torch.linalg.eigvals(scores)
         eigenvals = torch.max(torch.abs(eigenvals), dim=1)[0].view(x.shape[0], 1, 1)
         if not self.track_grads:
             eigenvals = eigenvals.detach()
-        attention = scores / eigenvals
-        attention = F.tanh(attention)
+        scores = scores / eigenvals
+
+        if self.use_tan == "after":
+            scores = F.tanh(scores)
+
+        attention = scores
+        if self.use_gate:
+            gate = self.gate(attention)
+            attention = attention * gate
 
         weighted = torch.bmm(attention, values)
 
         return weighted, attention
+
+class Gate(nn.Module):
+    def __init__(self, input_dim):
+        super(Gate, self).__init__()
+        self.bias = nn.Parameter(torch.randn(input_dim, input_dim))
+    
+    def forward(self, x):
+        # Compute h_ij = abs(x_ij) + b_ij
+        h = torch.abs(x) + self.bias
+        
+        # Compute a_ij = sigmoid(h_ij)
+        a = torch.sigmoid(h)
+        
+        return a

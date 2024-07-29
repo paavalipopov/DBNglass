@@ -257,8 +257,6 @@ class SelfAttention(nn.Module):
         self.input_dim = input_dim
         self.track_grads = track_grads
 
-        self.compute_eigenvals = compute_eigenvals
-
 
         self.query = nn.Linear(input_dim, hidden_dim)
         self.key = nn.Linear(input_dim, hidden_dim)
@@ -273,25 +271,12 @@ class SelfAttention(nn.Module):
         # scores = torch.bmm(queries, keys.transpose(1, 2))/(self.input_dim**2)
         scores = torch.bmm(queries, keys.transpose(1, 2))
 
-        # attention = F.softmax(scores, dim=2)
-        # attention = F.tanh(scores)
-        attention = scores
-        eigenvals = self.compute_eigenvals(attention)
+        eigenvals = torch.linalg.eigvals(scores)
+        eigenvals = torch.max(torch.abs(eigenvals), dim=1)[0].view(x.shape[0], 1, 1)
         if not self.track_grads:
             eigenvals = eigenvals.detach()
+        attention = scores / eigenvals
 
-        attention = attention / eigenvals
         weighted = torch.bmm(attention, values)
 
         return weighted, attention
-
-def compute_eigenvals(alignment_matrix):
-    batch_n_samples = alignment_matrix.shape[0]
-
-    eigvals = []
-    for batch_idx in range(batch_n_samples):
-        M = alignment_matrix[batch_idx]
-        L = torch.linalg.eigvals(M)
-        eigvals.append(torch.max(torch.abs(L)))
-
-    return torch.stack(eigvals).view(batch_n_samples, 1, 1)

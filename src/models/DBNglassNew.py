@@ -43,7 +43,8 @@ class RegCEloss:
             # Sparsity loss on DNC
             sparse_loss = self.lambda1 * torch.mean(torch.sum(torch.abs(DNC), dim=(1,2)))
 
-            loss = ce_loss + dag_loss + sparse_loss
+            # loss = ce_loss + dag_loss + sparse_loss
+            loss = ce_loss + sparse_loss
             return loss
 
         else:

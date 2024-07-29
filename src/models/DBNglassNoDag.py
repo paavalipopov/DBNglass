@@ -25,29 +25,20 @@ class RegCEloss:
 
     def __init__(self, model_cfg, lambda1 = 0.01):
         self.ce_loss = nn.CrossEntropyLoss()
+        self.sparsity_loss = nn.L1Loss()
 
         self.reg_param = model_cfg.reg_param
 
         self.lambda1 = lambda1 # Sparsity loss weight
 
-        self.include_dag = model_cfg.include_dag
-
     def __call__(self, logits, target, model, device, DNC, DNCs):
         ce_loss = self.ce_loss(logits, target)
 
-        if self.include_dag:
-            # DAG-ness loss - a differentiabe measure of how distant the given DNC is from DAG space
-            E = torch.linalg.matrix_exp(DNC * DNC) # (Zheng et al. 2018)
-            dag_loss = torch.mean(torch.vmap(torch.trace)(E)) - DNC.shape[1]
+        # Sparsity loss on DNC
+        sparse_loss = self.lambda1 * self.sparsity_loss(DNC, torch.zeros_like(DNC))
 
-            # Sparsity loss on DNC
-            sparse_loss = self.lambda1 * torch.mean(torch.sum(torch.abs(DNC), dim=(1,2)))
-
-            loss = ce_loss + dag_loss + sparse_loss
-            return loss
-
-        else:
-            return ce_loss
+        loss = ce_loss + sparse_loss
+        return loss
     
 
 
@@ -64,7 +55,6 @@ def default_HPs(cfg: DictConfig):
             "track_grads": True,
         },
         "reg_param": 1e-6,
-        "include_dag": True,
         # "lr": 2e-4,
         "lr": 4e-5,
         "input_size": cfg.dataset.data_info.main.data_shape[2],
@@ -276,7 +266,6 @@ class SelfAttention(nn.Module):
         if not self.track_grads:
             eigenvals = eigenvals.detach()
         attention = scores / eigenvals
-        attention = F.tanh(attention)
 
         weighted = torch.bmm(attention, values)
 
