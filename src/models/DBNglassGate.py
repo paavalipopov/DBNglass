@@ -27,17 +27,20 @@ class RegCEloss:
         self.ce_loss = nn.CrossEntropyLoss()
         self.sparsity_loss = nn.L1Loss()
 
-        self.reg_param = model_cfg.reg_param
+        self.minimize_global = model_cfg.loss.minimize_global
 
-        self.lambda1 = lambda1 # Sparsity loss weight
+        self.lambda1 = model_cfg.loss.lambda1 # Sparsity loss weight
 
     def __call__(self, logits, target, model, device, DNC, DNCs):
         ce_loss = self.ce_loss(logits, target)
 
         # Sparsity loss on DNC
-        sparse_loss = self.lambda1 * self.sparsity_loss(DNC, torch.zeros_like(DNC))
+        if self.minimize_global:
+            sparse_loss =  self.sparsity_loss(DNC, torch.zeros_like(DNC))
+        else:
+            sparse_loss = self.sparsity_loss(DNCs, torch.zeros_like(DNCs))
 
-        loss = ce_loss + sparse_loss
+        loss = ce_loss + self.lambda1 * sparse_loss
         return loss
     
 
@@ -56,8 +59,10 @@ def default_HPs(cfg: DictConfig):
             "use_tan": "none",
             "use_gate": True,
         },
-
-        "reg_param": 1e-6,
+        "loss": {
+            "lambda1": 0.01,
+            "minimize_global": False,
+        },
         "lr": 4e-5,
         "input_size": cfg.dataset.data_info.main.data_shape[2],
         "output_size": cfg.dataset.data_info.main.n_classes,
@@ -245,7 +250,7 @@ class SelfAttention(nn.Module):
 
         self.query = nn.Linear(input_dim, hidden_dim)
         self.key = nn.Linear(input_dim, hidden_dim)
-        self.value = spectral_norm(nn.Linear(input_dim, input_dim), n_power_iterations=5)
+        self.value = nn.Linear(input_dim, input_dim)
 
 
     def forward(self, x): # x.shape (batch_size, seq_length, input_dim)
