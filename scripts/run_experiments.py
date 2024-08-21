@@ -9,6 +9,8 @@ import hydra
 import pandas as pd
 import numpy as np
 
+import optuna
+
 from src.utils import set_project_name, set_run_name, validate_config, get_resume_params
 from src.data import data_factory, data_postfactory
 from src.dataloader import dataloader_factory, cross_validation_split
@@ -99,54 +101,56 @@ def tune(cfg, original_data, outer_k=None, is_interupted=False):
     else:
         starting_trial = 0
 
-    # for each trial get new set of HPs, test them using CV
-    for trial in range(starting_trial, cfg.mode.n_trials):
-        # get random model config
-        model_cfg = model_config_factory(cfg)
-        # reshape data according to model config (if needed)
-        data = data_postfactory(
-            cfg,
-            model_cfg,
-            original_data,
-        )
-        # run nested CV
-        for inner_k in range(0, cfg.mode.n_splits):
-            if outer_k is not None:
-                print(f"Outer k: {outer_k:02d}")
-            print(f"Trial: {trial:04d}")
-            print(f"Inner k: {inner_k:02d}")
+    tuner = OptunaTuner(cfg, original_data, outer_k)
+    tuner.optimize()
+    # # for each trial get new set of HPs, test them using CV
+    # for trial in range(starting_trial, cfg.mode.n_trials):
+    #     # get random model config
+    #     model_cfg = model_config_factory(cfg)
+    #     # reshape data according to model config (if needed)
+    #     data = data_postfactory(
+    #         cfg,
+    #         model_cfg,
+    #         original_data,
+    #     )
+    #     # run nested CV
+    #     for inner_k in range(0, cfg.mode.n_splits):
+    #         if outer_k is not None:
+    #             print(f"Outer k: {outer_k:02d}")
+    #         print(f"Trial: {trial:04d}")
+    #         print(f"Inner k: {inner_k:02d}")
 
-            set_run_name(cfg, outer_k=outer_k, trial=trial, inner_k=inner_k)
-            os.makedirs(cfg.run_dir, exist_ok=True)
-            dataloaders = dataloader_factory(cfg, data, k=inner_k)
-            results = run_trial(cfg, model_cfg, dataloaders)
+    #         set_run_name(cfg, outer_k=outer_k, trial=trial, inner_k=inner_k)
+    #         os.makedirs(cfg.run_dir, exist_ok=True)
+    #         dataloaders = dataloader_factory(cfg, data, k=inner_k)
+    #         results = run_trial(cfg, model_cfg, dataloaders)
 
-            # save results of nested CV in the trial directory
-            df = pd.DataFrame(results, index=[0])
-            with open(f"{cfg.trial_dir}/CV_runs.csv", "a", encoding="utf8") as f:
-                df.to_csv(f, header=f.tell() == 0, index=False)
+    #         # save results of nested CV in the trial directory
+    #         df = pd.DataFrame(results, index=[0])
+    #         with open(f"{cfg.trial_dir}/CV_runs.csv", "a", encoding="utf8") as f:
+    #             df.to_csv(f, header=f.tell() == 0, index=False)
 
-        # save model config
-        with open(f"{cfg.trial_dir}/model_config.yaml", "w", encoding="utf8") as f:
-            OmegaConf.save(model_cfg, f)
+    #     # save model config
+    #     with open(f"{cfg.trial_dir}/model_config.yaml", "w", encoding="utf8") as f:
+    #         OmegaConf.save(model_cfg, f)
 
-        # summarize the trial's CV results and save them
-        df = pd.read_csv(f"{cfg.trial_dir}/CV_runs.csv")
-        score = np.mean(df["test_score"].to_numpy())
-        loss = np.mean(df["test_average_loss"].to_numpy())
-        time = np.mean(df["training_time"].to_numpy())
-        df = pd.DataFrame(
-            {
-                "trial": trial,
-                "score": score,
-                "loss": loss,
-                "time": time,
-                "path_to_config": f"{cfg.trial_dir}/model_config.yaml",
-            },
-            index=[0],
-        )
-        with open(f"{cfg.k_dir}/trial_runs.csv", "a", encoding="utf8") as f:
-            df.to_csv(f, header=f.tell() == 0, index=False)
+    #     # summarize the trial's CV results and save them
+    #     df = pd.read_csv(f"{cfg.trial_dir}/CV_runs.csv")
+    #     score = np.mean(df["test_score"].to_numpy())
+    #     loss = np.mean(df["test_average_loss"].to_numpy())
+    #     time = np.mean(df["training_time"].to_numpy())
+    #     df = pd.DataFrame(
+    #         {
+    #             "trial": trial,
+    #             "score": score,
+    #             "loss": loss,
+    #             "time": time,
+    #             "path_to_config": f"{cfg.trial_dir}/model_config.yaml",
+    #         },
+    #         index=[0],
+    #     )
+    #     with open(f"{cfg.k_dir}/trial_runs.csv", "a", encoding="utf8") as f:
+    #         df.to_csv(f, header=f.tell() == 0, index=False)
 
     # get optimal config and save it
     df = pd.read_csv(f"{cfg.k_dir}/trial_runs.csv")
@@ -156,6 +160,73 @@ def tune(cfg, original_data, outer_k=None, is_interupted=False):
         best_config = OmegaConf.load(f)
     with open(f"{cfg.k_dir}/best_config.yaml", "w", encoding="utf8") as f:
         OmegaConf.save(best_config, f)
+
+class OptunaTuner:
+    def __init__(self, cfg, data, outer_k=None) -> None:
+        self.cfg = cfg
+        self.data = data
+        self.outer_k = outer_k
+    
+    def optimize(self):
+        study = optuna.create_study(direction='maximize')
+        study.optimize(self.objective, n_trials=self.cfg.mode.n_trials)
+
+        print("Best trial:")
+        trial = study.best_trial
+        print("  Value: ", trial.value)
+        print("  Params: ")
+        for key, value in trial.params.items():
+            print("    {}: {}".format(key, value))
+
+    def objective(self, trial):
+        # get random model config
+        model_cfg = model_config_factory(self.cfg, optuna_trial=trial)
+        # reshape data according to model config (if needed)
+        data = data_postfactory(
+            self.cfg,
+            model_cfg,
+            self.data,
+        )
+        # run nested CV
+        for inner_k in range(0, self.cfg.mode.n_splits):
+            if self.outer_k is not None:
+                print(f"Outer k: {self.outer_k:02d}")
+            print(f"Trial: {trial.number:04d}")
+            print(f"Inner k: {inner_k:02d}")
+
+            set_run_name(self.cfg, outer_k=self.outer_k, trial=trial.number, inner_k=inner_k)
+            os.makedirs(self.cfg.run_dir, exist_ok=True)
+            dataloaders = dataloader_factory(self.cfg, data, k=inner_k)
+            results = run_trial(self.cfg, model_cfg, dataloaders)
+
+            # save results of nested CV in the trial directory
+            df = pd.DataFrame(results, index=[0])
+            with open(f"{self.cfg.trial_dir}/CV_runs.csv", "a", encoding="utf8") as f:
+                df.to_csv(f, header=f.tell() == 0, index=False)
+
+        # save model config
+        with open(f"{self.cfg.trial_dir}/model_config.yaml", "w", encoding="utf8") as f:
+            OmegaConf.save(model_cfg, f)
+
+        # summarize the trial's CV results and save them
+        df = pd.read_csv(f"{self.cfg.trial_dir}/CV_runs.csv")
+        score = np.mean(df["test_score"].to_numpy())
+        loss = np.mean(df["test_average_loss"].to_numpy())
+        time = np.mean(df["training_time"].to_numpy())
+        df = pd.DataFrame(
+            {
+                "trial": trial.number,
+                "score": score,
+                "loss": loss,
+                "time": time,
+                "path_to_config": f"{self.cfg.trial_dir}/model_config.yaml",
+            },
+            index=[0],
+        )
+        with open(f"{self.cfg.k_dir}/trial_runs.csv", "a", encoding="utf8") as f:
+            df.to_csv(f, header=f.tell() == 0, index=False)
+        
+        return score
 
 
 def experiment(cfg, original_data, is_interupted=False):

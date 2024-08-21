@@ -9,10 +9,10 @@ from omegaconf import OmegaConf, DictConfig, open_dict
 from src.settings import LOGS_ROOT
 
 
-def model_config_factory(cfg: DictConfig, k=None):
+def model_config_factory(cfg: DictConfig, optuna_trial=None, k=None):
     """Model config factory"""
     if cfg.mode.name == "tune":
-        model_config = get_tune_config(cfg)
+        model_config = get_tune_config(cfg, optuna_trial=optuna_trial)
     elif cfg.mode.name == "exp":
         model_config = get_best_config(cfg, k)
     else:
@@ -21,7 +21,7 @@ def model_config_factory(cfg: DictConfig, k=None):
     return model_config
 
 
-def get_tune_config(cfg: DictConfig):
+def get_tune_config(cfg: DictConfig, optuna_trial=None):
     """Returns random HPs defined by the models random_HPs() function"""
     if "tunable" in cfg.model:
         assert cfg.model.tunable, "Model is specified as not tunable, aborting"
@@ -44,7 +44,7 @@ def get_tune_config(cfg: DictConfig):
                              tuned, or the function misnamed/not defined?"
         ) from e
 
-    model_cfg = random_HPs(cfg)
+    model_cfg = random_HPs(cfg, optuna_trial=optuna_trial)
 
     print("Tuning model config:")
     print(f"{OmegaConf.to_yaml(model_cfg)}")
