@@ -104,53 +104,6 @@ def tune(cfg, original_data, outer_k=None, is_interupted=False):
     tuner = OptunaTuner(cfg, original_data, outer_k)
     tuner.optimize()
     # # for each trial get new set of HPs, test them using CV
-    # for trial in range(starting_trial, cfg.mode.n_trials):
-    #     # get random model config
-    #     model_cfg = model_config_factory(cfg)
-    #     # reshape data according to model config (if needed)
-    #     data = data_postfactory(
-    #         cfg,
-    #         model_cfg,
-    #         original_data,
-    #     )
-    #     # run nested CV
-    #     for inner_k in range(0, cfg.mode.n_splits):
-    #         if outer_k is not None:
-    #             print(f"Outer k: {outer_k:02d}")
-    #         print(f"Trial: {trial:04d}")
-    #         print(f"Inner k: {inner_k:02d}")
-
-    #         set_run_name(cfg, outer_k=outer_k, trial=trial, inner_k=inner_k)
-    #         os.makedirs(cfg.run_dir, exist_ok=True)
-    #         dataloaders = dataloader_factory(cfg, data, k=inner_k)
-    #         results = run_trial(cfg, model_cfg, dataloaders)
-
-    #         # save results of nested CV in the trial directory
-    #         df = pd.DataFrame(results, index=[0])
-    #         with open(f"{cfg.trial_dir}/CV_runs.csv", "a", encoding="utf8") as f:
-    #             df.to_csv(f, header=f.tell() == 0, index=False)
-
-    #     # save model config
-    #     with open(f"{cfg.trial_dir}/model_config.yaml", "w", encoding="utf8") as f:
-    #         OmegaConf.save(model_cfg, f)
-
-    #     # summarize the trial's CV results and save them
-    #     df = pd.read_csv(f"{cfg.trial_dir}/CV_runs.csv")
-    #     score = np.mean(df["test_score"].to_numpy())
-    #     loss = np.mean(df["test_average_loss"].to_numpy())
-    #     time = np.mean(df["training_time"].to_numpy())
-    #     df = pd.DataFrame(
-    #         {
-    #             "trial": trial,
-    #             "score": score,
-    #             "loss": loss,
-    #             "time": time,
-    #             "path_to_config": f"{cfg.trial_dir}/model_config.yaml",
-    #         },
-    #         index=[0],
-    #     )
-    #     with open(f"{cfg.k_dir}/trial_runs.csv", "a", encoding="utf8") as f:
-    #         df.to_csv(f, header=f.tell() == 0, index=False)
 
     # get optimal config and save it
     df = pd.read_csv(f"{cfg.k_dir}/trial_runs.csv")
