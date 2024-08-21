@@ -94,7 +94,7 @@ def default_HPs(cfg: DictConfig):
             "single_embed": True,
             "num_layers": 1,
             "input_embedding_size": 32,
-            "hidden_embedding_size": 64,
+            "hidden_embedding_size": 32,
         },
         "attention": {
             "hidden_dim": 32,
@@ -104,7 +104,7 @@ def default_HPs(cfg: DictConfig):
         },
         "loss": {
             "minimize_global": False,
-            "threshold": 0.1,
+            "threshold": 0.01,
         },
         "lr": 4e-5,
         "input_size": cfg.dataset.data_info.main.data_shape[2],
