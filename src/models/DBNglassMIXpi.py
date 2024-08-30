@@ -10,7 +10,7 @@ from torch.nn.utils.parametrizations import spectral_norm
 from omegaconf import OmegaConf, DictConfig
 
 import ipdb
-
+import time
 
 def get_model(cfg: DictConfig, model_cfg: DictConfig):
     return MultivariateTSModel(model_cfg)
@@ -153,7 +153,8 @@ class MultivariateTSModel(nn.Module):
             track_grads=model_cfg.attention.track_grads,
             use_tan=model_cfg.attention.use_tan,
             use_gate=model_cfg.attention.use_gate,
-            n_components=self.num_components
+            n_components=self.num_components,
+            n_iterations=model_cfg.attention.n_iterations
         )
 
         # Global Temporal Attention 
@@ -233,8 +234,6 @@ class MultivariateTSModel(nn.Module):
         torch.save(h_0, savepath+"h_init.pt")
 
         alignment_matrices = []
-        h_0_gru = []
-        h_0_attn = []
         
         for t in range(T):
             # Process one time step
@@ -258,10 +257,6 @@ class MultivariateTSModel(nn.Module):
             alignment_matrices.append(attn_output_weights)
 
             if torch.any(torch.isnan(h_0)):
-                # self.dump_data(alignment_matrices, savepath, "align_matrix")
-                # self.dump_data(h_0_gru, savepath, "h_gru")
-                # self.dump_data(h_0_attn, savepath, "h_attn")
-                
                 raise Exception(f"h_0 has nans at time point {t}")
             
         
@@ -281,33 +276,32 @@ class MultivariateTSModel(nn.Module):
 
 
 class SelfAttention(nn.Module):
-    def __init__(self, input_dim, hidden_dim, track_grads, use_tan, use_gate, n_components):
+    def __init__(self, input_dim, hidden_dim, track_grads, use_tan, use_gate, n_components, n_iterations=100):
         super(SelfAttention, self).__init__()
         self.input_dim = input_dim
         self.track_grads = track_grads
         self.use_tan = use_tan
         self.use_gate = use_gate
+        self.n_iterations = n_iterations
 
         if use_gate:
             self.gate = Gate(n_components)
 
         self.query = nn.Linear(input_dim, hidden_dim)
         self.key = nn.Linear(input_dim, hidden_dim)
-        self.value = nn.Linear(input_dim, input_dim)
 
 
     def forward(self, x): # x.shape (batch_size, seq_length, input_dim)
         queries = self.query(x)
         keys = self.key(x)
-        values = self.value(x)
 
         scores = torch.bmm(queries, keys.transpose(1, 2))
 
         if self.use_tan == "before":
             scores = F.tanh(scores)
 
-        eigenvals = torch.linalg.eigvals(scores)
-        eigenvals = torch.max(torch.abs(eigenvals), dim=1)[0].view(x.shape[0], 1, 1)
+        eigenvals = batched_power_iteration(queries, keys.transpose(1, 2), num_iterations=self.n_iterations)
+        eigenvals = torch.abs(eigenvals).view(x.shape[0], 1, 1)
         if not self.track_grads:
             eigenvals = eigenvals.detach()
         scores = scores / eigenvals
@@ -315,14 +309,54 @@ class SelfAttention(nn.Module):
         if self.use_tan == "after":
             scores = F.tanh(scores)
 
-        attention = scores
+        transfer = scores
         if self.use_gate:
-            gate = self.gate(attention)
-            attention = attention * gate
+            gate = self.gate(transfer)
+            transfer = transfer * gate
 
-        weighted = torch.bmm(attention, values)
+        next_states = torch.bmm(transfer, x)
 
-        return weighted, attention
+        return next_states, transfer
+
+def batched_power_iteration(A, B, num_iterations=100):
+    """
+    Batched power iteration method to compute the dominant eigenvalue.
+    
+    Args:
+    A: Tensor of shape [batch, N, hid_dim]
+    B: Tensor of shape [batch, hid_dim, N]
+    num_iterations: Number of power iterations to perform
+    
+    Returns:
+    eigenvalues: Tensor of shape [batch] containing the dominant eigenvalue for each batch
+    """
+    batch, N, hid_dim = A.shape
+    assert B.shape == (batch, hid_dim, N), "B shape mismatch"
+
+    # Initialize v with shape [batch, N, 1]
+    v = torch.ones(batch, N, 1, device=A.device)
+    v = v / torch.norm(v, dim=1, keepdim=True)
+
+    with torch.no_grad():
+        for _ in range(num_iterations):
+            # Compute Bv: [batch, hid_dim, N] @ [batch, N, 1] -> [batch, hid_dim, 1]
+            Bv = torch.bmm(B, v)
+            
+            # Compute ABv: [batch, N, hid_dim] @ [batch, hid_dim, 1] -> [batch, N, 1]
+            ABv = torch.bmm(A, Bv)
+            
+            # Normalize v
+            v = ABv / torch.norm(ABv, dim=1, keepdim=True)
+
+        # Compute the Rayleigh quotient for each batch
+        # v.transpose(1, 2) to get shape [batch, 1, N]
+        numerator = torch.bmm(v.transpose(1, 2), ABv).squeeze(2)
+        denominator = torch.bmm(v.transpose(1, 2), v).squeeze(2)
+
+        # Compute eigenvalues: shape [batch]
+        eigenvalues = numerator/denominator
+
+    return eigenvalues
 
 class Gate(nn.Module):
     def __init__(self, input_dim):

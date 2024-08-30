@@ -306,11 +306,12 @@ class SelfAttention(nn.Module):
         if self.use_tan == "before":
             scores = F.tanh(scores)
 
-        eigenvals = torch.linalg.eigvals(scores)
-        eigenvals = torch.max(torch.abs(eigenvals), dim=1)[0].view(x.shape[0], 1, 1)
-        if not self.track_grads:
-            eigenvals = eigenvals.detach()
-        scores = scores / eigenvals
+        if self.track_grads:
+            norms = torch.linalg.matrix_norm(scores, keepdim=True)
+        else:
+            with torch.no_grad():
+                norms = torch.linalg.matrix_norm(scores, keepdim=True).detach()
+        scores = scores / norms
 
         if self.use_tan == "after":
             scores = F.tanh(scores)

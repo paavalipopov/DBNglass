@@ -10,6 +10,7 @@ from torch.nn.utils.parametrizations import spectral_norm
 from omegaconf import OmegaConf, DictConfig
 
 import ipdb
+import time
 
 
 def get_model(cfg: DictConfig, model_cfg: DictConfig):
@@ -233,8 +234,8 @@ class MultivariateTSModel(nn.Module):
         torch.save(h_0, savepath+"h_init.pt")
 
         alignment_matrices = []
-        h_0_gru = []
-        h_0_attn = []
+        # hid_states = []
+        # hid_states.append(h_0)
         
         for t in range(T):
             # Process one time step
@@ -243,7 +244,6 @@ class MultivariateTSModel(nn.Module):
             h_0 = h_0.permute(1, 0, 2, 3).reshape(1, B*self.num_components, self.hidden_dim) # (1, batch_size * num_components, hidden_dim)
             _, h_0 = self.gru(gru_input, h_0)
             h_0 = h_0.reshape(1, B, self.num_components, self.hidden_dim).permute(1, 0, 2, 3) # (batch_size, 1, num_components, hidden_dim)
-            # h_0_gru.append(h_0)
 
             # Reshape h_0 for self-attention
             h_0_reshaped = h_0.squeeze(1)  # (batch_size, num_components, hidden_dim)
@@ -256,12 +256,9 @@ class MultivariateTSModel(nn.Module):
             # h_0_attn.append(h_0)
 
             alignment_matrices.append(attn_output_weights)
+            # hid_states.append(h_0)
 
             if torch.any(torch.isnan(h_0)):
-                # self.dump_data(alignment_matrices, savepath, "align_matrix")
-                # self.dump_data(h_0_gru, savepath, "h_gru")
-                # self.dump_data(h_0_attn, savepath, "h_attn")
-                
                 raise Exception(f"h_0 has nans at time point {t}")
             
         
@@ -276,7 +273,7 @@ class MultivariateTSModel(nn.Module):
         logits = self.clf(DNC_flat)
         # logits.shape: [batch_size; n_classes]
 
-        return logits, DNC_flat.reshape(B, self.num_components, self.num_components), alignment_matrices
+        return logits, DNC_flat.reshape(B, self.num_components, self.num_components), alignment_matrices #, torch.stack(hid_states)
 
 
 
@@ -293,36 +290,35 @@ class SelfAttention(nn.Module):
 
         self.query = nn.Linear(input_dim, hidden_dim)
         self.key = nn.Linear(input_dim, hidden_dim)
-        self.value = nn.Linear(input_dim, input_dim)
 
 
     def forward(self, x): # x.shape (batch_size, seq_length, input_dim)
         queries = self.query(x)
         keys = self.key(x)
-        values = self.value(x)
 
         scores = torch.bmm(queries, keys.transpose(1, 2))
 
         if self.use_tan == "before":
             scores = F.tanh(scores)
-
-        eigenvals = torch.linalg.eigvals(scores)
-        eigenvals = torch.max(torch.abs(eigenvals), dim=1)[0].view(x.shape[0], 1, 1)
-        if not self.track_grads:
-            eigenvals = eigenvals.detach()
-        scores = scores / eigenvals
+        
+        if self.track_grads:
+            norms = torch.linalg.matrix_norm(scores, keepdim=True)
+        else:
+            with torch.no_grad():
+                norms = torch.linalg.matrix_norm(scores, keepdim=True).detach()
+        scores = scores / norms
 
         if self.use_tan == "after":
             scores = F.tanh(scores)
 
-        attention = scores
+        transfer = scores
         if self.use_gate:
-            gate = self.gate(attention)
-            attention = attention * gate
+            gate = self.gate(transfer)
+            transfer = transfer * gate
 
-        weighted = torch.bmm(attention, values)
+        next_states = torch.bmm(transfer, x)
 
-        return weighted, attention
+        return next_states, transfer
 
 class Gate(nn.Module):
     def __init__(self, input_dim):

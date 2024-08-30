@@ -29,33 +29,18 @@ class InvertedHoyerMeasure(nn.Module):
     def forward(self, x):
         # Assuming x has shape (batch_size, input_dim, input_dim)
         batch_size = x.size(0)
-        losses = []
 
-        for i in range(batch_size):
-            # Extract the ith sample
-            xi = x[i]
-            
-            # Number of elements in the sample
-            n = xi.numel()
-            sqrt_n = torch.sqrt(torch.tensor(float(n), device=xi.device))
+        n = x[0].numel()
+        sqrt_n = torch.sqrt(torch.tensor(float(n), device=x.device))
 
-            # Sum of absolute values
-            sum_abs_x = torch.sum(torch.abs(xi))
-
-            # Square root of the sum of squares
-            sqrt_sum_squares = torch.sqrt(torch.sum(xi ** 2))
-
-            # Calculate the Hoyer measure
-            numerator = sqrt_n - (sum_abs_x / sqrt_sum_squares)
-            denominator = sqrt_n - 1
-            mod_hoyer = 1 - (numerator / denominator) # = 0 if perfectly sparse, 1 if all are equal
-            
-            loss = self.a(mod_hoyer - self.threshold)
-
-            losses.append(loss)
-
+        sum_abs_x = torch.sum(torch.abs(x), dim=(1, 2))
+        sqrt_sum_squares = torch.sqrt(torch.sum(torch.square(x), dim=(1, 2)))
+        numerator = sqrt_n - sum_abs_x / sqrt_sum_squares
+        denominator = sqrt_n - 1
+        mod_hoyer = 1 - (numerator / denominator) # = 0 if perfectly sparse, 1 if all are equal
+        loss = self.a(mod_hoyer - self.threshold)
         # Calculate the mean loss over the batch
-        mean_loss = torch.mean(torch.stack(losses))
+        mean_loss = torch.mean(loss)
 
         return mean_loss
 

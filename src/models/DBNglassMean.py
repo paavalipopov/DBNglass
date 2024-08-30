@@ -156,29 +156,6 @@ class MultivariateTSModel(nn.Module):
             n_components=self.num_components
         )
 
-        # Global Temporal Attention 
-        self.upscale = 0.05
-        self.upscale2 = 0.5
-
-        self.gta_embed = nn.Sequential(
-            nn.Linear(
-                num_components**2,
-                round(self.upscale * num_components**2),
-            ),
-        )
-        self.gta_norm = nn.Sequential(
-            nn.BatchNorm1d(round(self.upscale * num_components**2)),
-            nn.ReLU(),
-        )
-        self.gta_attend = nn.Sequential(
-            nn.Linear(
-                round(self.upscale * num_components**2),
-                round(self.upscale2 * num_components**2),
-            ),
-            nn.ReLU(),
-            nn.Linear(round(self.upscale2 * num_components**2), 1),
-        )
-
         # Classifier
         self.clf = nn.Linear(num_components**2, output_size)
         self.clf = nn.Sequential(
@@ -189,22 +166,6 @@ class MultivariateTSModel(nn.Module):
             nn.ReLU(),
             nn.Linear(num_components**2 // 4, output_size),
         )
-
-    def gta_attention(self, x, node_axis=1):
-        # x.shape: [batch_size; time_length; input_feature_size * input_feature_size]
-        x_readout = x.mean(node_axis, keepdim=True)
-        x_readout = x * x_readout
-
-        a = x_readout.shape[0]
-        b = x_readout.shape[1]
-        x_readout = x_readout.reshape(-1, x_readout.shape[2])
-        x_embed = self.gta_norm(self.gta_embed(x_readout))
-        x_graphattention = (self.gta_attend(x_embed).squeeze()).reshape(a, b)
-        x_graphattention = F.softmax(x_graphattention, dim=1)
-        return (x * (x_graphattention.unsqueeze(-1))).sum(node_axis)
-    
-        # x_graphattention = self.HW(x_graphattention.reshape(a, b))
-        # return (x * (x_graphattention.unsqueeze(-1))).mean(node_axis)
     
     def dump_data(self, data, path, basename):
         for i, dat in enumerate(data):
@@ -233,8 +194,6 @@ class MultivariateTSModel(nn.Module):
         torch.save(h_0, savepath+"h_init.pt")
 
         alignment_matrices = []
-        h_0_gru = []
-        h_0_attn = []
         
         for t in range(T):
             # Process one time step
@@ -269,8 +228,7 @@ class MultivariateTSModel(nn.Module):
         alignment_matrices = torch.stack(alignment_matrices, dim=1)  # (batch_size, seq_len, num_components, num_components)
         
         attn_input = alignment_matrices.reshape(B, T, -1) # [batch_size; time_length; num_components * num_components]
-
-        DNC_flat = self.gta_attention(attn_input)
+        DNC_flat = torch.mean(attn_input, dim=1)
         
         # 4. Pass learned graph to the classifier to get predictions
         logits = self.clf(DNC_flat)
