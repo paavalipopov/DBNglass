@@ -34,10 +34,9 @@ def load_data(
 
     if "tuning_holdout" in cfg.dataset and cfg.dataset.tuning_holdout:
         if cfg.mode.name == "tune":
-            indices = pd.read_csv(tune_indices_path, header=None).to_numpy()
+            indices = pd.read_csv(tune_indices_path, header=None).to_numpy().squeeze()
         else:
-            indices = pd.read_csv(exp_indices_path, header=None).to_numpy()
-
+            indices = pd.read_csv(exp_indices_path, header=None).to_numpy().squeeze()
         data = data[indices]
         labels = labels[indices]
 
