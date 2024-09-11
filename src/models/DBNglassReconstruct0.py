@@ -14,7 +14,13 @@ import time
 
 
 def get_model(cfg: DictConfig, model_cfg: DictConfig):
-    return MultivariateTSModel(model_cfg)
+    model = MultivariateTSModel(model_cfg)
+    path = "/data/users2/ppopov1/glass_proj/assets/model_weights/dbn0.pt"
+    checkpoint = torch.load(
+        path, map_location=lambda storage, loc: storage
+    )
+    model.load_state_dict(checkpoint)
+    return model
 
 
 def get_criterion(cfg: DictConfig, model_cfg: DictConfig):
@@ -49,15 +55,18 @@ class InvertedHoyerMeasure(nn.Module):
 class RegCEloss:
     """Cross-entropy loss with model regularization"""
 
-    def __init__(self, model_cfg, lambda1 = 0.01):
+    def __init__(self, model_cfg):
         self.ce_loss = nn.CrossEntropyLoss()
         self.sparsity_loss = InvertedHoyerMeasure(threshold=model_cfg.loss.threshold)
+        self.rec_loss = nn.MSELoss()
+
+        self.labdda = model_cfg.loss.labmda
 
         self.minimize_global = model_cfg.loss.minimize_global
 
         # self.lambda1 = model_cfg.loss.lambda1 # Sparsity loss weight
 
-    def __call__(self, logits, target, model, device, DNC, DNCs):
+    def __call__(self, logits, target, model, device, DNC, DNCs, reconstructed, originals):
         ce_loss = self.ce_loss(logits, target)
 
         # Sparsity loss on DNC
@@ -68,8 +77,9 @@ class RegCEloss:
             DNCs = DNCs.reshape(B*T, C, C)
             sparse_loss = self.sparsity_loss(DNCs)
 
+        rec_loss = self.rec_loss(reconstructed, originals)
         # loss = ce_loss + self.lambda1 * sparse_loss
-        loss = ce_loss + sparse_loss
+        loss = ce_loss + self.labdda * sparse_loss + rec_loss
         return loss
     
 
@@ -91,8 +101,9 @@ def default_HPs(cfg: DictConfig):
         "loss": {
             "minimize_global": False,
             "threshold": 0.01,
+            "labmda": 1.0,
         },
-        "lr": 8e-5,
+        "lr": 1e-4,
         "input_size": cfg.dataset.data_info.main.data_shape[2],
         "output_size": cfg.dataset.data_info.main.n_classes,
     }
@@ -105,7 +116,7 @@ def random_HPs(cfg: DictConfig, optuna_trial=None):
             "single_embed": True,
             "num_layers": 1,
             "input_embedding_size": optuna_trial.suggest_int("rnn.input_embedding_size", 4, 64),
-            "hidden_embedding_size": optuna_trial.suggest_int("rnn.hidden_embedding_size", 16, 128),
+            "hidden_embedding_size": optuna_trial.suggest_int("rnn.hidden_embedding_size", 4, 128),
         },
         "attention": {
             "hidden_dim": optuna_trial.suggest_int("attention.hidden_dim", 4, 64),
@@ -116,6 +127,7 @@ def random_HPs(cfg: DictConfig, optuna_trial=None):
         "loss": {
             "minimize_global": False,
             "threshold": 10 ** optuna_trial.suggest_float("loss.threshold", -2, -0.2),
+            "labmda": 10 ** optuna_trial.suggest_float("loss.threshold", -1, 1),
         },
         "lr": 10 ** optuna_trial.suggest_float("lr", -5, -3),
         "input_size": cfg.dataset.data_info.main.data_shape[2],
@@ -146,6 +158,7 @@ class MultivariateTSModel(nn.Module):
         
         # GRU layer
         self.gru = nn.GRU(embedding_dim, hidden_dim, num_layers, batch_first=True)
+        self.reconstructor = nn.Linear(hidden_dim, 1)
 
         # Self-attention layer
         self.attention = SelfAttention(
@@ -211,10 +224,10 @@ class MultivariateTSModel(nn.Module):
         for i, dat in enumerate(data):
             torch.save(dat, f"{path}/{basename}_{i}.pt")
 
-    def forward(self, x):
+    def forward(self, x, pretraining=False):
         savepath = "/data/users2/ppopov1/glass_proj/scripts/debug2/"
         B, T, _ = x.shape  # [batch_size, time_length, num_components]
-        
+        orig_x = x
         # Apply component-specific embeddings
         # embedded = torch.stack([self.embeddings[i](x[:, :, i].unsqueeze(-1)) for i in range(self.num_components)], dim=1)
         if self.single_embed:
@@ -233,7 +246,8 @@ class MultivariateTSModel(nn.Module):
         h_0 = torch.zeros(B, 1, self.num_components, self.hidden_dim, device=x.device)
         torch.save(h_0, savepath+"h_init.pt")
 
-        alignment_matrices = []
+        mixing_matrices = []
+        hidden_states = []
         # hid_states = []
         # hid_states.append(h_0)
         
@@ -249,13 +263,13 @@ class MultivariateTSModel(nn.Module):
             h_0_reshaped = h_0.squeeze(1)  # (batch_size, num_components, hidden_dim)
 
             # Apply self-attention
-            attn_out, attn_output_weights = self.attention(h_0_reshaped)
-
+            h_0, mixing_matrix = self.attention(h_0_reshaped)
+            hidden_states.append(h_0)
             # Update h_0 with attention output
-            h_0 = attn_out.unsqueeze(1)
+            h_0 = h_0.unsqueeze(1)
             # h_0_attn.append(h_0)
 
-            alignment_matrices.append(attn_output_weights)
+            mixing_matrices.append(mixing_matrix)
             # hid_states.append(h_0)
 
             if torch.any(torch.isnan(h_0)):
@@ -263,17 +277,22 @@ class MultivariateTSModel(nn.Module):
             
         
         # Stack the alignment matrices
-        alignment_matrices = torch.stack(alignment_matrices, dim=1)  # (batch_size, seq_len, num_components, num_components)
+        mixing_matrices = torch.stack(mixing_matrices, dim=1)  # (batch_size, seq_len, num_components, num_components)
+        hidden_states = torch.stack(hidden_states, dim=1)[:, 1:, :, :] #[batch_size; time_length-1; num_components, hidden_dim]
+        reconstructed = self.reconstructor(hidden_states).squeeze() #[batch_size; time_length-1; num_components]
         
-        attn_input = alignment_matrices.reshape(B, T, -1) # [batch_size; time_length; num_components * num_components]
-
-        DNC_flat = self.gta_attention(attn_input)
+        if pretraining:
+            return mixing_matrices, reconstructed, orig_x[:, 1:, :]
+        
+        GTA_input = mixing_matrices.reshape(B, T, -1) # [batch_size; time_length; num_components * num_components]
+        DNC_flat = self.gta_attention(GTA_input)
         
         # 4. Pass learned graph to the classifier to get predictions
         logits = self.clf(DNC_flat)
         # logits.shape: [batch_size; n_classes]
-
-        return logits, DNC_flat.reshape(B, self.num_components, self.num_components), alignment_matrices #, torch.stack(hid_states)
+        
+        # Reconstruct the next time points
+        return logits, DNC_flat.reshape(B, self.num_components, self.num_components), mixing_matrices, reconstructed, orig_x[:, 1:, :]
 
 
 

@@ -228,13 +228,13 @@ class MultivariateTSModel(nn.Module):
         alignment_matrices = torch.stack(alignment_matrices, dim=1)  # (batch_size, seq_len, num_components, num_components)
         
         attn_input = alignment_matrices.reshape(B, T, -1) # [batch_size; time_length; num_components * num_components]
-        DNC_flat = torch.mean(attn_input, dim=1)
+        logits = self.clf(attn_input)
+        logits = torch.mean(logits, dim=1)
         
         # 4. Pass learned graph to the classifier to get predictions
-        logits = self.clf(DNC_flat)
         # logits.shape: [batch_size; n_classes]
 
-        return logits, DNC_flat.reshape(B, self.num_components, self.num_components), alignment_matrices
+        return logits, torch.mean(attn_input, dim=1), alignment_matrices
 
 
 
@@ -251,36 +251,35 @@ class SelfAttention(nn.Module):
 
         self.query = nn.Linear(input_dim, hidden_dim)
         self.key = nn.Linear(input_dim, hidden_dim)
-        self.value = nn.Linear(input_dim, input_dim)
 
 
     def forward(self, x): # x.shape (batch_size, seq_length, input_dim)
         queries = self.query(x)
         keys = self.key(x)
-        values = self.value(x)
 
         scores = torch.bmm(queries, keys.transpose(1, 2))
 
         if self.use_tan == "before":
             scores = F.tanh(scores)
-
-        eigenvals = torch.linalg.eigvals(scores)
-        eigenvals = torch.max(torch.abs(eigenvals), dim=1)[0].view(x.shape[0], 1, 1)
-        if not self.track_grads:
-            eigenvals = eigenvals.detach()
-        scores = scores / eigenvals
+        
+        if self.track_grads:
+            norms = torch.linalg.matrix_norm(scores, keepdim=True)
+        else:
+            with torch.no_grad():
+                norms = torch.linalg.matrix_norm(scores, keepdim=True).detach()
+        scores = scores / norms
 
         if self.use_tan == "after":
             scores = F.tanh(scores)
 
-        attention = scores
+        transfer = scores
         if self.use_gate:
-            gate = self.gate(attention)
-            attention = attention * gate
+            gate = self.gate(transfer)
+            transfer = transfer * gate
 
-        weighted = torch.bmm(attention, values)
+        next_states = torch.bmm(transfer, x)
 
-        return weighted, attention
+        return next_states, transfer
 
 class Gate(nn.Module):
     def __init__(self, input_dim):
