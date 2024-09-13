@@ -14,7 +14,7 @@ def load_data(cfg: DictConfig):
     Input:
     dataset_path: str = DATA_ROOT.joinpath("fbirn/FBIRN_AllData.h5")
     - path to the dataset
-    indices_path: str = DATA_ROOT.joinpath("fbirn/correct_indices_GSP.csv")
+    indices_path: str = DATA_ROOT.joinpath("ICA_correct_order.csv")
     - path to correct indices/components
     labels_path: str = DATA_ROOT.joinpath("fbirn/labels_FBIRN_new.csv")
     - path to labels=

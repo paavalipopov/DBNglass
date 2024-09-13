@@ -11,7 +11,7 @@ from src.settings import DATA_ROOT
 def load_data(
     cfg: DictConfig,
     dataset_path: str = DATA_ROOT.joinpath("oasis/OASIS3_AllData_allsessions.npz"),
-    indices_path: str = DATA_ROOT.joinpath("oasis/correct_indices_GSP.csv"),
+    indices_path: str = DATA_ROOT.joinpath("ICA_correct_order.csv"),
     labels_path: str = DATA_ROOT.joinpath("oasis/labels_OASIS_6_classes.csv"),
     sessions_path: str = DATA_ROOT.joinpath("oasis/oasis_first_sessions_index.csv"),
 ):
@@ -21,7 +21,7 @@ def load_data(
     Input:
     dataset_path: str = DATA_ROOT.joinpath("oasis/OASIS3_AllData_allsessions.npz")
     - path to the dataset
-    indices_path: str = DATA_ROOT.joinpath("oasis/correct_indices_GSP.csv")
+    indices_path: str = DATA_ROOT.joinpath("ICA_correct_order.csv")
     - path to correct indices/components
     labels_path: str = DATA_ROOT.joinpath("oasis/labels_OASIS_6_classes.csv")
     - path to labels

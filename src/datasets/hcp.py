@@ -12,7 +12,7 @@ def load_data(
     cfg: DictConfig,
     dataset_path: str = DATA_ROOT.joinpath("hcp/HCP_AllData_sess1.npz"),
     labels_path: str = DATA_ROOT.joinpath("hcp/labels_HCP_Gender.csv"),
-    indices_path: str = DATA_ROOT.joinpath("hcp/correct_indices_GSP.csv"),
+    indices_path: str = DATA_ROOT.joinpath("ICA_correct_order.csv"),
 ):
     """
     Return ICA HCP data

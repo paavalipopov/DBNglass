@@ -11,7 +11,7 @@ from src.datasets.ukb import load_data as load_sex_data
 def load_data(
     cfg: DictConfig,
     dataset_path: str = "/data/users2/ppopov1/datasets/ukb/UKB_age_data.npz",
-    indices_path: str = "/data/users2/ppopov1/datasets/ukb/correct_indices_GSP.csv",
+    indices_path: str = "/data/users2/ppopov1/datasets/ICA_correct_order.csv",
     tune_indices_path: str = "/data/users2/ppopov1/datasets/ukb/tune_indices.csv",
     exp_indices_path: str = "/data/users2/ppopov1/datasets/ukb/exp_indices.csv",
 ):
@@ -21,7 +21,7 @@ def load_data(
     Input:
     dataset_path: str = "/data/users2/ppopov1/datasets/ukb/UKB_sex_data.npz"
     - path to the dataset with lablels
-    indices_path: str = "/data/users2/ppopov1/datasets/ukb/correct_indices_GSP.csv"
+    indices_path: str = "/data/users2/ppopov1/datasets/ICA_correct_order.csv"
     - path to correct indices/components
 
     Output:

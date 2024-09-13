@@ -12,7 +12,7 @@ from src.settings import DATA_ROOT
 def load_data(
     cfg: DictConfig,
     dataset_path: str = DATA_ROOT.joinpath("abide/ABIDE1_AllData.h5"),
-    indices_path: str = DATA_ROOT.joinpath("abide/correct_indices_GSP.csv"),
+    indices_path: str = DATA_ROOT.joinpath("ICA_correct_order.csv"),
     labels_path: str = DATA_ROOT.joinpath("abide/labels_ABIDE1.csv"),
 ):
     """
@@ -21,7 +21,7 @@ def load_data(
     Input:
     dataset_path: str = DATA_ROOT.joinpath("abide/ABIDE1_AllData.h5")
     - path to the dataset
-    indices_path: str = DATA_ROOT.joinpath("abide/correct_indices_GSP.csv")
+    indices_path: str = DATA_ROOT.joinpath("ICA_correct_order.csv")
     - path to correct indices/components
     labels_path: str = DATA_ROOT.joinpath("abide/labels_ABIDE1.csv")
     - path to labels

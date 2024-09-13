@@ -11,7 +11,7 @@ from src.settings import DATA_ROOT
 def load_data(
     cfg: DictConfig,
     dataset_path: str = DATA_ROOT.joinpath("bsnip/BSNIP_data.npz"),
-    indices_path: str = DATA_ROOT.joinpath("bsnip/correct_indices_GSP.csv"),
+    indices_path: str = DATA_ROOT.joinpath("ICA_correct_order.csv"),
 ):
     """
     Return BSNIP data
@@ -19,7 +19,7 @@ def load_data(
     Input:
     dataset_path: str = DATA_ROOT.joinpath("bsnip/BSNIP_data.npz")
     - path to the dataset with lablels
-    indices_path: str = DATA_ROOT.joinpath("bsnip/correct_indices_GSP.csv")
+    indices_path: str = DATA_ROOT.joinpath("ICA_correct_order.csv")
     - path to correct indices/components
 
     Output:
