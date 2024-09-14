@@ -209,12 +209,13 @@ class BasicTrainer:
                 data, target = data.to(self.device), target.to(self.device)
                 total_size += data.shape[0]
 
-                logits, DNC, DNCs = self.model(data)
-                loss = self.criterion(logits, target, self.model, self.device, DNC, DNCs)
+                logits, DNC, DNCs, rec_loss = self.model(data)
+                ce_loss, sparse_loss = self.criterion(logits, target, self.model, self.device, DNC, DNCs)
                 score = torch.softmax(logits, dim=-1)
 
                 all_scores.append(score.cpu().detach().numpy())
                 all_targets.append(target.cpu().detach().numpy())
+                loss = ce_loss + sparse_loss + rec_loss
                 total_loss += loss.sum().item()
 
                 if is_train_dataset:
