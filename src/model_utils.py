@@ -7,38 +7,11 @@ from torch import nn, optim
 from omegaconf import DictConfig
 
 
-def criterion_factory(cfg: DictConfig, model_cfg: DictConfig):
-    """Criterion factory"""
-    if "custom_criterion" not in cfg.model or not cfg.model.custom_criterion:
-        criterion = CEloss()
-    else:
-        try:
-            model_module = import_module(f"src.models.{cfg.model.name}")
-        except ModuleNotFoundError as e:
-            raise ModuleNotFoundError(
-                f"No module named '{cfg.model.name}' \
-                                    found in 'src.models'. Check if model name \
-                                    in config file and its module name are the same"
-            ) from e
-
-        try:
-            get_criterion = model_module.get_criterion
-        except AttributeError as e:
-            raise AttributeError(
-                f"'src.models.{cfg.model.name}' has no function\
-                                'get_criterion'. Is the function misnamed/not defined?"
-            ) from e
-
-        criterion = get_criterion(cfg, model_cfg)
-
-    return criterion
-
-
 class CEloss:
     """Basic Cross-entropy loss"""
 
     def __init__(self):
-        self.ce_loss = nn.CrossEntropyLoss(reduction="sum")
+        self.ce_loss = nn.CrossEntropyLoss(reduction="mean")
 
     def __call__(self, logits, target, model, device):
         ce_loss = self.ce_loss(logits, target)
