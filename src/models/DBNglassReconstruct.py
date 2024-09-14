@@ -24,10 +24,6 @@ def get_model(cfg: DictConfig, model_cfg: DictConfig):
         # model.load_state_dict(checkpoint)
     return model
 
-
-def get_criterion(cfg: DictConfig, model_cfg: DictConfig):
-    return RegCEloss(model_cfg)
-
 class InvertedHoyerMeasure(nn.Module):
     """Sparsity loss function based on Hoyer measure: https://jmlr.csail.mit.edu/papers/volume5/hoyer04a/hoyer04a.pdf"""
     def __init__(self, threshold):
@@ -59,13 +55,13 @@ class RegCEloss:
     def __init__(self, model_cfg):
         self.ce_loss = nn.CrossEntropyLoss()
         self.sparsity_loss = InvertedHoyerMeasure(threshold=model_cfg.loss.threshold)
-        self.rec_loss = nn.MSELoss()
+        self.prediction_loss = nn.MSELoss() # used to evaluate the error of the next predicted input, not the final class prediction
 
         self.labdda = model_cfg.loss.labmda
 
         self.minimize_global = model_cfg.loss.minimize_global
 
-    def __call__(self, logits, target, model, device, DNC, DNCs):
+    def __call__(self, logits, target, DNC, DNCs, predicted, origs):
         ce_loss = self.ce_loss(logits, target)
 
         # Sparsity loss on DNC
@@ -76,7 +72,9 @@ class RegCEloss:
             DNCs = DNCs.reshape(B*T, C, C)
             sparse_loss = self.sparsity_loss(DNCs)
 
-        return ce_loss, self.labdda * sparse_loss
+        prediction_loss = self.prediction_loss(predicted, origs)
+
+        return ce_loss + self.labdda * sparse_loss + prediction_loss, ce_loss, sparse_loss, prediction_loss
     
 
 
@@ -137,6 +135,8 @@ class MultivariateTSModel(nn.Module):
     def __init__(self, model_cfg: DictConfig):
         super(MultivariateTSModel, self).__init__()
 
+        self.criterion = RegCEloss(model_cfg)
+
         self.num_components = num_components = model_cfg.input_size
         self.num_layers = num_layers = model_cfg.rnn.num_layers
         self.embedding_dim = embedding_dim = model_cfg.rnn.input_embedding_size
@@ -145,7 +145,6 @@ class MultivariateTSModel(nn.Module):
 
         self.single_embed = model_cfg.rnn.single_embed
 
-        self.prediction_error = nn.MSELoss(reduction='none') # used to evaluate the error of the next predicted input, not the final class prediction
         self.predictor = nn.Linear(hidden_dim, 1)
 
         # Component-specific embeddings
@@ -203,6 +202,28 @@ class MultivariateTSModel(nn.Module):
             nn.Linear(num_components**2 // 4, output_size),
         )
 
+    def loss(self, output, target=None):
+        if len(output) == 5: # training case
+            assert target is not None
+            logits, DNC, mixing_matrices, predicted, origs = output
+        elif len(output) == 3: # pretraining case
+            mixing_matrices, predicted, origs = output
+            logits = target = torch.ones(1)
+            DNC = torch.ones(1, 1, 1)
+        else:
+            # print(output)
+            raise Exception(f"Cannot unpack the loss input with {len(output)} elements")
+        
+        loss, ce_loss, sparse_loss, prediction_loss = self.criterion(logits, target, DNC, mixing_matrices, predicted, origs)
+
+        log = {
+            "ce_loss": ce_loss.item(),
+            "sparse_loss": sparse_loss.item(),
+            "prediction_loss": prediction_loss.item(),
+        }
+
+        return loss, log
+        
     def gta_attention(self, x, node_axis=1):
         # x.shape: [batch_size; time_length; input_feature_size * input_feature_size]
         x_readout = x.mean(node_axis, keepdim=True)
@@ -259,7 +280,6 @@ class MultivariateTSModel(nn.Module):
         mixing_matrices = []
         hidden_states = []
         
-        # rec_loss = []
         for t in range(T):
             # Process one time step
             h, mixing_matrix = self.process_step(embedded[:, :, t, :], h, B) # update h with the new input; find new mixing matrix; mix(h)
@@ -268,18 +288,15 @@ class MultivariateTSModel(nn.Module):
                 
             if torch.any(torch.isnan(h)):
                 raise Exception(f"h has nans at time point {t}")
-            
 
         mixing_matrices = torch.stack(mixing_matrices, dim=1)  # (batch_size, seq_len, num_components, num_components)
         hidden_states = torch.stack(hidden_states, dim=1)[:, 1:, :, :] #[batch_size; time_length-1; num_components, hidden_dim]
-        origs = x[:, 1:, :]
         predicted = self.predictor(hidden_states).squeeze() #[batch_size; time_length-1; num_components]
-        rec_loss = self.prediction_error(predicted, origs).mean()
+        origs = x[:, 1:, :]
+        
         
         if pretraining:
-            return mixing_matrices, rec_loss
-        
-
+            return (mixing_matrices, predicted, origs)
         
         GTA_input = mixing_matrices.reshape(B, T, -1) # [batch_size; time_length; num_components * num_components]
         DNC_flat = self.gta_attention(GTA_input)
@@ -289,8 +306,7 @@ class MultivariateTSModel(nn.Module):
         logits = self.clf(DNC_flat)
         # logits.shape: [batch_size; n_classes]
         
-        # Reconstruct the next time points
-        return logits, DNC, mixing_matrices, rec_loss
+        return logits, (logits, DNC, mixing_matrices, predicted, origs)
 
 
 class SelfAttention(nn.Module):

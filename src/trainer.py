@@ -6,6 +6,7 @@ import os
 import time
 import warnings
 from pprint import pprint
+import math
 
 import torch
 from torch.utils.data import DataLoader
@@ -24,7 +25,7 @@ warnings.filterwarnings("ignore")
 
 
 def trainer_factory(
-    cfg, model_cfg, dataloaders, model, criterion, optimizer, scheduler, logger
+    cfg, model_cfg, dataloaders, model, optimizer, scheduler, logger
 ):
     """Trainer factory"""
     if "custom_trainer" not in cfg.model or not cfg.model.custom_trainer:
@@ -33,7 +34,6 @@ def trainer_factory(
             model_cfg,
             dataloaders,
             model,
-            criterion,
             optimizer,
             scheduler,
             logger,
@@ -61,7 +61,6 @@ def trainer_factory(
             model_cfg,
             dataloaders,
             model,
-            criterion,
             optimizer,
             scheduler,
             logger,
@@ -79,7 +78,6 @@ class BasicTrainer:
         model_cfg,
         dataloaders,
         model,
-        criterion,
         optimizer,
         scheduler,
         logger,
@@ -88,7 +86,6 @@ class BasicTrainer:
         self.model_cfg = model_cfg
         self.dataloaders = dataloaders
         self.model = model
-        self.criterion = criterion
         self.optimizer = optimizer
         self.scheduler = scheduler
         self.logger = logger
@@ -115,7 +112,7 @@ class BasicTrainer:
             # CUDA
             dev = "cuda:0"
         elif torch.backends.mps.is_available() and torch.backends.mps.is_built():
-            # Apple Silicon's mps is too buggy, using cpu instead
+            # Apple Silicon's mps was too buggy, using cpu instead
             # dev = "mps"
             dev = "cpu"
         else:
@@ -151,7 +148,7 @@ class BasicTrainer:
         return total_params
 
     def run_epoch(self, ds_name):
-        """Run single epoch and monitor OutOfMemoryError"""
+        """Run single epoch while monitoring for OutOfMemoryError"""
         impatience = 0
         while True:
             try:
@@ -199,6 +196,10 @@ class BasicTrainer:
         self.model.train(is_train_dataset)
         start_time = time.time()
 
+        n_samples = len(self.dataloaders[ds_name].dataset)
+        n_batches = math.ceil(n_samples / self.dataloaders[ds_name].batch_size)
+        logs = []
+        total_loss = 0
         with torch.set_grad_enabled(is_train_dataset):
             for data, target in self.dataloaders[ds_name]:
                 # permute TS data if needed
@@ -206,29 +207,25 @@ class BasicTrainer:
                     for i, sample in enumerate(data):
                         data[i] = sample[rp(sample.shape[0]), :]
 
-                data, target = data.to(self.device), target.to(self.device)
-                total_size += data.shape[0]
+                # data, target = data.to(self.device), target.to(self.device)
 
-                logits, DNC, DNCs, rec_loss = self.model(data)
-                ce_loss, sparse_loss = self.criterion(logits, target, self.model, self.device, DNC, DNCs)
+                logits, loss_input = self.model(data)
+                loss, log = self.model.loss(loss_input, target)
                 score = torch.softmax(logits, dim=-1)
+                if log is not None:
+                    logs.append(log)
 
                 all_scores.append(score.cpu().detach().numpy())
                 all_targets.append(target.cpu().detach().numpy())
-                loss = ce_loss + sparse_loss + rec_loss
-                total_loss += loss.sum().item()
+                total_loss += loss.item()
 
                 if is_train_dataset:
                     self.optimizer.zero_grad()
                     loss.backward()
                     self.optimizer.step()
-                elif ds_name == "test":
-                    torch.save(target, f"{self.save_path}/labels.pt")
-                    torch.save(DNC, f"{self.save_path}/DNC.pt")
-                    torch.save(DNCs, f"{self.save_path}/DNCs.pt")
 
-        average_time = (time.time() - start_time) / total_size
-        average_loss = total_loss / total_size
+        average_time = (time.time() - start_time) / n_samples
+        average_loss = total_loss / n_batches
 
         y_test = np.hstack(all_targets)
         y_score = np.vstack(all_scores)
@@ -244,6 +241,10 @@ class BasicTrainer:
             ds_name + "_average_loss": average_loss,
             ds_name + "_average_time": average_time,
         }
+        if len(logs) != 0:
+            log = pd.DataFrame(logs).mean().to_dict()
+            for key, value in log.items():
+                metrics[ds_name + '_' + key] = value
 
         return metrics
 

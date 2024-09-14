@@ -15,7 +15,7 @@ from src.utils import set_project_name, set_run_name, validate_config, get_resum
 from src.data import data_factory, data_postfactory
 from src.dataloader import dataloader_factory, cross_validation_split
 from src.model import model_config_factory, model_factory
-from src.model_utils import criterion_factory, optimizer_factory, scheduler_factory
+from src.model_utils import optimizer_factory, scheduler_factory
 from src.logger import logger_factory
 from src.trainer import trainer_factory
 
@@ -238,7 +238,6 @@ def experiment(cfg, original_data, is_interupted=False):
 def run_trial(cfg, model_cfg, dataloaders):
     """Given config and prepared dataloaders, build and train the model and return test results"""
     model = model_factory(cfg, model_cfg)
-    criterion = criterion_factory(cfg, model_cfg)
     optimizer = optimizer_factory(cfg, model_cfg, model)
     scheduler = scheduler_factory(cfg, model_cfg, optimizer)
     logger = logger_factory(cfg, model_cfg)
@@ -248,7 +247,6 @@ def run_trial(cfg, model_cfg, dataloaders):
         model_cfg,
         dataloaders,
         model,
-        criterion,
         optimizer,
         scheduler,
         logger,
