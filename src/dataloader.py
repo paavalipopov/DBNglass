@@ -100,6 +100,16 @@ def common_dataloader(cfg, original_data, k, trial=None):
         if key != "main":
             split_data[key] = data[key]
 
+
+    # find the device for data
+    if torch.cuda.is_available():
+        # CUDA
+        device = "cuda:0"
+    else:
+        # CPU
+        device = "cpu"
+    device = torch.device(device)
+    
     # create dataloaders
     dataloaders = {}
     key_order = ["TS", "FNC", "labels"]
@@ -108,11 +118,11 @@ def common_dataloader(cfg, original_data, k, trial=None):
             if data_key == "labels":
                 split_data[key][data_key] = torch.tensor(
                     split_data[key][data_key], dtype=torch.int64
-                )
+                ).to(device)
             else:
                 split_data[key][data_key] = torch.tensor(
                     split_data[key][data_key], dtype=torch.float32
-                )
+                ).to(device)
         # order-wise unpacking: 'key_order' order should be followed
         unpacked_tensors = [
             split_data[key].get(data_key)
