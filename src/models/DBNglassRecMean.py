@@ -308,22 +308,21 @@ class SelfAttention(nn.Module):
         queries = self.query(x)
         keys = self.key(x)
 
-        scores = torch.bmm(queries, keys.transpose(1, 2))
+        transfer = torch.bmm(queries, keys.transpose(1, 2))
 
         if self.use_tan == "before":
-            scores = F.tanh(scores)
+            transfer = F.tanh(transfer)
         
         if self.track_grads:
-            norms = torch.linalg.matrix_norm(scores, keepdim=True)
+            norms = torch.linalg.matrix_norm(transfer, keepdim=True)
         else:
             with torch.no_grad():
-                norms = torch.linalg.matrix_norm(scores, keepdim=True).detach()
-        scores = scores / norms
+                norms = torch.linalg.matrix_norm(transfer, keepdim=True).detach()
+        transfer = transfer / norms
 
         if self.use_tan == "after":
-            scores = F.tanh(scores)
+            transfer = F.tanh(transfer)
 
-        transfer = scores
         if self.use_gate:
             gate = self.gate(transfer)
             transfer = transfer * gate
