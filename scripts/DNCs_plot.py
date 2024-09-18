@@ -3,21 +3,15 @@
 import torch
 import matplotlib.pyplot as plt
 import seaborn as sns
+import numpy as np
 
 plt.close()
 
 # Define the dictionary of paths
-paths = {
-    # "New model": "/data/users2/ppopov1/glass_proj/assets/logs/test-exp-dice_3_defHP-fbirn/k_00/trial_0000/",
-    # "Orig DICE": "/data/users2/ppopov1/glass_proj/assets/logs/test-exp-dice_defHP-fbirn/k_00/trial_0000/",
-    # "Newer model": "/data/users2/ppopov1/glass_proj/assets/logs/test-exp-dice_4_defHP-fbirn/k_00/trial_0000/",
-    # "LeakyReLU model": "/data/users2/ppopov1/glass_proj/assets/logs/test-exp-dice_5_defHP-fbirn/k_00/trial_0000/",
-    # "Stable model": "/data/users2/ppopov1/glass_proj/assets/logs/big-exp-dice_5_defHP-fbirn/k_00/trial_0000/",
-    # "Stable model (bigger dim)": "/data/users2/ppopov1/glass_proj/assets/logs/bigger-exp-dice_5_defHP-fbirn/k_00/trial_0000/",
-    # "Stable model (bigger dim and lr)": "/data/users2/ppopov1/glass_proj/assets/logs/bigger_lr-exp-dice_5_defHP-fbirn/k_00/trial_0000/",
-    "Per-component embedding layer": "/data/users2/ppopov1/glass_proj/assets/logs/test3-exp-dice_7ng_defHP-fbirn/k_00/trial_0000/",
-    "Single embedding layer": "/data/users2/ppopov1/glass_proj/assets/logs/test3-exp-dice_6ng_defHP-fbirn/k_00/trial_0000/",
-}
+paths = {}
+paths[f"DBN with GTA"] = f"/data/users2/ppopov1/glass_proj/assets/logs/new_ica_test-exp-DBNglassReconstruct_defHP-fbirn/k_04/trial_0009/"
+paths[f"meanDBN"] = f"/data/users2/ppopov1/glass_proj/assets/logs/new_ica_test-exp-DBNglassRecMean_defHP-fbirn/k_04/trial_0009/"
+paths[f"Deep attention meanDBN"] = f"/data/users2/ppopov1/glass_proj/assets/logs/new_ica_test-exp-DBNglassDeep_defHP-fbirn/k_04/trial_0009/"
 
 # Number of samples to plot
 n_samples_to_plot = 3
@@ -32,7 +26,7 @@ for name, path in paths.items():
     fig.suptitle(f"{name} extended (first column - combined, others - time-specific)")
     for row_idx in range(n_samples_to_plot):
         array = torch.load(path+"DNCs.pt").cpu().detach().numpy()[row_idx]
-        maxval = torch.abs(array).max()
+        maxval = np.abs(array).max()
         
         for col_idx in range(n_timepoints_to_plot+1):
             if col_idx == 0:
