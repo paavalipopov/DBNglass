@@ -15,13 +15,16 @@ import time
 
 def get_model(cfg: DictConfig, model_cfg: DictConfig):
     model = MultivariateTSModel(model_cfg)
-    path = "/data/users2/ppopov1/glass_proj/assets/model_weights/dbn2.pt"
+    # if cfg.dataset.name == "fbirn_old":
+    #     path = "/data/users2/ppopov1/glass_proj/assets/model_weights/dbn_ukb_old.pt"
+    # else:
+    path = "/data/users2/ppopov1/glass_proj/assets/model_weights/dbn_ukb.pt"
     checkpoint = torch.load(
         path, map_location=lambda storage, loc: storage
     )
-    missing_keys = ["gta_embed.0.weight", "gta_embed.0.bias", "gta_norm.0.weight", "gta_norm.0.bias", "gta_norm.0.running_mean", "gta_norm.0.running_var", "gta_norm.0.num_batches_tracked", "gta_attend.0.weight", "gta_attend.0.bias", "gta_attend.2.weight", "gta_attend.2.bias"]
-    pruned_checkpouint = {k: v for k, v in checkpoint.items() if k not in missing_keys}
-    model.load_state_dict(pruned_checkpouint)
+    missing_keys = ["gta", "clf"]
+    pruned_checkpoint = {k: v for k, v in checkpoint.items() if not any(bad_key in k for bad_key in missing_keys)}
+    model.load_state_dict(pruned_checkpoint, strict=False)
     return model
 
 
@@ -160,7 +163,7 @@ class MultivariateTSModel(nn.Module):
         
         # GRU layer
         self.gru = nn.GRU(embedding_dim, hidden_dim, num_layers, batch_first=True)
-        self.reconstructor = nn.Linear(hidden_dim, 1)
+        self.predictor = nn.Linear(hidden_dim, 1)
 
         # Self-attention layer
         self.attention = SelfAttention(
@@ -241,20 +244,20 @@ class MultivariateTSModel(nn.Module):
         # Stack the alignment matrices
         mixing_matrices = torch.stack(mixing_matrices, dim=1)  # (batch_size, seq_len, num_components, num_components)
         hidden_states = torch.stack(hidden_states, dim=1)[:, 1:, :, :] #[batch_size; time_length-1; num_components, hidden_dim]
-        reconstructed = self.reconstructor(hidden_states).squeeze() #[batch_size; time_length-1; num_components]
+        predicted = self.predictor(hidden_states).squeeze() #[batch_size; time_length-1; num_components]
         
         if pretraining:
-            return mixing_matrices, reconstructed, orig_x[:, 1:, :]
+            return mixing_matrices, predicted, orig_x[:, 1:, :]
         
         GTA_input = mixing_matrices.reshape(B, T, -1) # [batch_size; time_length; num_components * num_components]
         DNC_flat = torch.mean(GTA_input, dim=1)
         
-        # 4. Pass learned graph to the classifier to get predictions
-        logits = self.clf(DNC_flat)
+        logits = self.clf(GTA_input)
+        logits = torch.mean(logits, dim=1) # mean over time
         # logits.shape: [batch_size; n_classes]
         
         # Reconstruct the next time points
-        return logits, DNC_flat.reshape(B, self.num_components, self.num_components), mixing_matrices, reconstructed, orig_x[:, 1:, :]
+        return logits, DNC_flat.reshape(B, self.num_components, self.num_components), mixing_matrices, predicted, orig_x[:, 1:, :]
 
 
 

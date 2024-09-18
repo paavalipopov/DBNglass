@@ -10,10 +10,22 @@ from torch.nn.utils.parametrizations import spectral_norm
 from omegaconf import OmegaConf, DictConfig
 
 import ipdb
+import time
 
 
 def get_model(cfg: DictConfig, model_cfg: DictConfig):
-    return MultivariateTSModel(model_cfg)
+    model = MultivariateTSModel(model_cfg)
+    # if cfg.dataset.name == "fbirn_old":
+    #     path = "/data/users2/ppopov1/glass_proj/assets/model_weights/dbn_ukb_old.pt"
+    # else:
+    path = "/data/users2/ppopov1/glass_proj/assets/model_weights/DBNglassDeep_ukb.pt"
+    checkpoint = torch.load(
+        path, map_location=lambda storage, loc: storage
+    )
+    missing_keys = ["gta", "clf"]
+    pruned_checkpoint = {k: v for k, v in checkpoint.items() if not any(bad_key in k for bad_key in missing_keys)}
+    model.load_state_dict(pruned_checkpoint, strict=False)
+    return model
 
 
 def get_criterion(cfg: DictConfig, model_cfg: DictConfig):
@@ -48,15 +60,18 @@ class InvertedHoyerMeasure(nn.Module):
 class RegCEloss:
     """Cross-entropy loss with model regularization"""
 
-    def __init__(self, model_cfg, lambda1 = 0.01):
+    def __init__(self, model_cfg):
         self.ce_loss = nn.CrossEntropyLoss()
         self.sparsity_loss = InvertedHoyerMeasure(threshold=model_cfg.loss.threshold)
+        self.rec_loss = nn.MSELoss()
+
+        self.labdda = model_cfg.loss.labmda
 
         self.minimize_global = model_cfg.loss.minimize_global
 
         # self.lambda1 = model_cfg.loss.lambda1 # Sparsity loss weight
 
-    def __call__(self, logits, target, model, device, DNC, DNCs):
+    def __call__(self, logits, target, model, device, DNC, DNCs, reconstructed, originals):
         ce_loss = self.ce_loss(logits, target)
 
         # Sparsity loss on DNC
@@ -67,8 +82,9 @@ class RegCEloss:
             DNCs = DNCs.reshape(B*T, C, C)
             sparse_loss = self.sparsity_loss(DNCs)
 
+        rec_loss = self.rec_loss(reconstructed, originals)
         # loss = ce_loss + self.lambda1 * sparse_loss
-        loss = ce_loss + sparse_loss
+        loss = ce_loss + self.labdda * sparse_loss + rec_loss
         return loss
     
 
@@ -78,11 +94,11 @@ def default_HPs(cfg: DictConfig):
         "rnn": {
             "single_embed": True,
             "num_layers": 1,
-            "input_embedding_size": 32,
-            "hidden_embedding_size": 32,
+            "input_embedding_size": 16,
+            "hidden_embedding_size": 16,
         },
         "attention": {
-            "hidden_dim": 32,
+            "hidden_dim": 16,
             "track_grads": True,
             "use_tan": "none",
             "use_gate": True,
@@ -90,8 +106,9 @@ def default_HPs(cfg: DictConfig):
         "loss": {
             "minimize_global": False,
             "threshold": 0.01,
+            "labmda": 1.0,
         },
-        "lr": 4e-5,
+        "lr": 1e-4,
         "input_size": cfg.dataset.data_info.main.data_shape[2],
         "output_size": cfg.dataset.data_info.main.n_classes,
     }
@@ -104,7 +121,7 @@ def random_HPs(cfg: DictConfig, optuna_trial=None):
             "single_embed": True,
             "num_layers": 1,
             "input_embedding_size": optuna_trial.suggest_int("rnn.input_embedding_size", 4, 64),
-            "hidden_embedding_size": optuna_trial.suggest_int("rnn.hidden_embedding_size", 16, 128),
+            "hidden_embedding_size": optuna_trial.suggest_int("rnn.hidden_embedding_size", 4, 128),
         },
         "attention": {
             "hidden_dim": optuna_trial.suggest_int("attention.hidden_dim", 4, 64),
@@ -115,6 +132,7 @@ def random_HPs(cfg: DictConfig, optuna_trial=None):
         "loss": {
             "minimize_global": False,
             "threshold": 10 ** optuna_trial.suggest_float("loss.threshold", -2, -0.2),
+            "labmda": 10 ** optuna_trial.suggest_float("loss.threshold", -1, 1),
         },
         "lr": 10 ** optuna_trial.suggest_float("lr", -5, -3),
         "input_size": cfg.dataset.data_info.main.data_shape[2],
@@ -145,6 +163,7 @@ class MultivariateTSModel(nn.Module):
         
         # GRU layer
         self.gru = nn.GRU(embedding_dim, hidden_dim, num_layers, batch_first=True)
+        self.predictor = nn.Linear(hidden_dim, 1)
 
         # Self-attention layer
         self.attention = SelfAttention(
@@ -154,29 +173,6 @@ class MultivariateTSModel(nn.Module):
             use_tan=model_cfg.attention.use_tan,
             use_gate=model_cfg.attention.use_gate,
             n_components=self.num_components
-        )
-
-        # Global Temporal Attention 
-        self.upscale = 0.05
-        self.upscale2 = 0.5
-
-        self.gta_embed = nn.Sequential(
-            nn.Linear(
-                num_components**2,
-                round(self.upscale * num_components**2),
-            ),
-        )
-        self.gta_norm = nn.Sequential(
-            nn.BatchNorm1d(round(self.upscale * num_components**2)),
-            nn.ReLU(),
-        )
-        self.gta_attend = nn.Sequential(
-            nn.Linear(
-                round(self.upscale * num_components**2),
-                round(self.upscale2 * num_components**2),
-            ),
-            nn.ReLU(),
-            nn.Linear(round(self.upscale2 * num_components**2), 1),
         )
 
         # Classifier
@@ -190,30 +186,15 @@ class MultivariateTSModel(nn.Module):
             nn.Linear(num_components**2 // 4, output_size),
         )
 
-    def gta_attention(self, x, node_axis=1):
-        # x.shape: [batch_size; time_length; input_feature_size * input_feature_size]
-        x_readout = x.mean(node_axis, keepdim=True)
-        x_readout = x * x_readout
-
-        a = x_readout.shape[0]
-        b = x_readout.shape[1]
-        x_readout = x_readout.reshape(-1, x_readout.shape[2])
-        x_embed = self.gta_norm(self.gta_embed(x_readout))
-        x_graphattention = (self.gta_attend(x_embed).squeeze()).reshape(a, b)
-        x_graphattention = F.softmax(x_graphattention, dim=1)
-        return (x * (x_graphattention.unsqueeze(-1))).sum(node_axis)
-    
-        # x_graphattention = self.HW(x_graphattention.reshape(a, b))
-        # return (x * (x_graphattention.unsqueeze(-1))).mean(node_axis)
     
     def dump_data(self, data, path, basename):
         for i, dat in enumerate(data):
             torch.save(dat, f"{path}/{basename}_{i}.pt")
 
-    def forward(self, x):
+    def forward(self, x, pretraining=False):
         savepath = "/data/users2/ppopov1/glass_proj/scripts/debug2/"
         B, T, _ = x.shape  # [batch_size, time_length, num_components]
-        
+        orig_x = x
         # Apply component-specific embeddings
         # embedded = torch.stack([self.embeddings[i](x[:, :, i].unsqueeze(-1)) for i in range(self.num_components)], dim=1)
         if self.single_embed:
@@ -232,9 +213,8 @@ class MultivariateTSModel(nn.Module):
         h_0 = torch.zeros(B, 1, self.num_components, self.hidden_dim, device=x.device)
         torch.save(h_0, savepath+"h_init.pt")
 
-        alignment_matrices = []
-        h_0_gru = []
-        h_0_attn = []
+        mixing_matrices = []
+        hidden_states = []
         
         for t in range(T):
             # Process one time step
@@ -243,40 +223,41 @@ class MultivariateTSModel(nn.Module):
             h_0 = h_0.permute(1, 0, 2, 3).reshape(1, B*self.num_components, self.hidden_dim) # (1, batch_size * num_components, hidden_dim)
             _, h_0 = self.gru(gru_input, h_0)
             h_0 = h_0.reshape(1, B, self.num_components, self.hidden_dim).permute(1, 0, 2, 3) # (batch_size, 1, num_components, hidden_dim)
-            # h_0_gru.append(h_0)
 
             # Reshape h_0 for self-attention
             h_0_reshaped = h_0.squeeze(1)  # (batch_size, num_components, hidden_dim)
 
             # Apply self-attention
-            attn_out, attn_output_weights = self.attention(h_0_reshaped)
-
+            h_0, mixing_matrix = self.attention(h_0_reshaped)
+            hidden_states.append(h_0)
             # Update h_0 with attention output
-            h_0 = attn_out.unsqueeze(1)
+            h_0 = h_0.unsqueeze(1)
             # h_0_attn.append(h_0)
 
-            alignment_matrices.append(attn_output_weights)
+            mixing_matrices.append(mixing_matrix)
+            # hid_states.append(h_0)
 
             if torch.any(torch.isnan(h_0)):
-                # self.dump_data(alignment_matrices, savepath, "align_matrix")
-                # self.dump_data(h_0_gru, savepath, "h_gru")
-                # self.dump_data(h_0_attn, savepath, "h_attn")
-                
                 raise Exception(f"h_0 has nans at time point {t}")
             
         
         # Stack the alignment matrices
-        alignment_matrices = torch.stack(alignment_matrices, dim=1)  # (batch_size, seq_len, num_components, num_components)
+        mixing_matrices = torch.stack(mixing_matrices, dim=1)  # (batch_size, seq_len, num_components, num_components)
+        hidden_states = torch.stack(hidden_states, dim=1)[:, 1:, :, :] #[batch_size; time_length-1; num_components, hidden_dim]
+        predicted = self.predictor(hidden_states).squeeze() #[batch_size; time_length-1; num_components]
         
-        attn_input = alignment_matrices.reshape(B, T, -1) # [batch_size; time_length; num_components * num_components]
-
-        DNC_flat = self.gta_attention(attn_input)
+        if pretraining:
+            return mixing_matrices, predicted, orig_x[:, 1:, :]
         
-        # 4. Pass learned graph to the classifier to get predictions
-        logits = self.clf(DNC_flat)
+        GTA_input = mixing_matrices.reshape(B, T, -1) # [batch_size; time_length; num_components * num_components]
+        DNC_flat = torch.mean(GTA_input, dim=1)
+        
+        logits = self.clf(GTA_input)
+        logits = torch.mean(logits, dim=1) # mean over time
         # logits.shape: [batch_size; n_classes]
-
-        return logits, DNC_flat.reshape(B, self.num_components, self.num_components), alignment_matrices
+        
+        # Reconstruct the next time points
+        return logits, DNC_flat.reshape(B, self.num_components, self.num_components), mixing_matrices, predicted, orig_x[:, 1:, :]
 
 
 
@@ -291,38 +272,45 @@ class SelfAttention(nn.Module):
         if use_gate:
             self.gate = Gate(n_components)
 
-        self.query = nn.Linear(input_dim, hidden_dim)
-        self.key = nn.Linear(input_dim, hidden_dim)
-        self.value = nn.Linear(input_dim, input_dim)
+        self.query = nn.Sequential(
+            nn.Linear(input_dim, hidden_dim),
+            nn.ReLU(),
+            nn.Linear(hidden_dim, hidden_dim),
+        )
+        self.key = nn.Sequential(
+            nn.Linear(input_dim, hidden_dim),
+            nn.ReLU(),
+            nn.Linear(hidden_dim, hidden_dim),
+        )
 
 
     def forward(self, x): # x.shape (batch_size, seq_length, input_dim)
         queries = self.query(x)
         keys = self.key(x)
-        values = self.value(x)
 
         scores = torch.bmm(queries, keys.transpose(1, 2))
 
         if self.use_tan == "before":
             scores = F.tanh(scores)
-
-        eigenvals = torch.linalg.eigvals(scores)
-        eigenvals = torch.max(torch.abs(eigenvals), dim=1)[0].view(x.shape[0], 1, 1)
-        if not self.track_grads:
-            eigenvals = eigenvals.detach()
-        scores = scores / eigenvals
+        
+        if self.track_grads:
+            norms = torch.linalg.matrix_norm(scores, keepdim=True)
+        else:
+            with torch.no_grad():
+                norms = torch.linalg.matrix_norm(scores, keepdim=True).detach()
+        scores = scores / norms
 
         if self.use_tan == "after":
             scores = F.tanh(scores)
 
-        attention = scores
+        transfer = scores
         if self.use_gate:
-            gate = self.gate(attention)
-            attention = attention * gate
+            gate = self.gate(transfer)
+            transfer = transfer * gate
 
-        weighted = torch.bmm(attention, values)
+        next_states = torch.bmm(transfer, x)
 
-        return weighted, attention
+        return next_states, transfer
 
 class Gate(nn.Module):
     def __init__(self, input_dim):
