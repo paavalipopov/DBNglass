@@ -209,8 +209,8 @@ class BasicTrainer:
                 data, target = data.to(self.device), target.to(self.device)
                 total_size += data.shape[0]
 
-                logits, DNC, DNCs = self.model(data)
-                loss = self.criterion(logits, target, self.model, self.device, DNC, DNCs)
+                logits, DNC, DNCs, reconstructed, originals = self.model(data)
+                loss = self.criterion(logits, target, self.model, self.device, DNC, DNCs, reconstructed, originals)
                 score = torch.softmax(logits, dim=-1)
 
                 all_scores.append(score.cpu().detach().numpy())
