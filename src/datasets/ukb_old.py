@@ -9,7 +9,7 @@ from omegaconf import DictConfig
 def load_data(
     cfg: DictConfig,
     dataset_path: str = "/data/users2/ppopov1/datasets/ukb/UKB_",
-    indices_path: str = "/data/users2/ppopov1/datasets/ICA_correct_order.csv",
+    indices_path: str = "/data/users2/ppopov1/datasets/ukb/correct_indices_GSP.csv",
 ):
     """
     Return UKB data
@@ -17,7 +17,7 @@ def load_data(
     Input:
     dataset_path: str = "/data/users2/ppopov1/datasets/ukb/UKB_"
     - path to the dataset (incomplete)
-    indices_path: str = "/data/users2/ppopov1/datasets/ICA_correct_order.csv"
+    indices_path: str = "/data/users2/ppopov1/datasets/ukb/correct_indices_GSP.csv"
     - path to correct indices/components
 
     Output:
