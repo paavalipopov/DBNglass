@@ -11,7 +11,7 @@ from src.settings import DATA_ROOT
 def load_data(
     cfg: DictConfig,
     dataset_path: str = DATA_ROOT.joinpath("adni/ADNI_data_194.npz"),
-    indices_path: str = DATA_ROOT.joinpath("adni/correct_indices_GSP.csv"),
+    indices_path: str = DATA_ROOT.joinpath("ICA_correct_order.csv"),
 ):
     """
     Return ADNI data

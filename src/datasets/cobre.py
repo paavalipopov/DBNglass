@@ -12,7 +12,7 @@ from src.settings import DATA_ROOT
 def load_data(
     cfg: DictConfig,
     dataset_path: str = DATA_ROOT.joinpath("cobre/COBRE_AllData.h5"),
-    indices_path: str = DATA_ROOT.joinpath("cobre/correct_indices_GSP.csv"),
+    indices_path: str = DATA_ROOT.joinpath("ICA_correct_order.csv"),
     labels_path: str = DATA_ROOT.joinpath("cobre/labels_COBRE.csv"),
 ):
     """
