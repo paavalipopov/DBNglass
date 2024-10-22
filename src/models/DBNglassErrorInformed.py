@@ -188,11 +188,9 @@ class MultivariateTSModel(nn.Module):
             torch.save(dat, f"{path}/{basename}_{i}.pt")
 
     def forward(self, x, pretraining=False):
-        savepath = "/data/users2/ppopov1/glass_proj/scripts/debug2/"
         B, T, _ = x.shape  # [batch_size, time_length, num_components]
         orig_x = x
-        # Apply component-specific embeddings
-        # embedded = torch.stack([self.embeddings[i](x[:, :, i].unsqueeze(-1)) for i in range(self.num_components)], dim=1)
+
         if self.single_embed:
             x = x.permute(0, 2, 1)
             x = x.reshape(B * self.num_components, T, 1)
@@ -200,14 +198,9 @@ class MultivariateTSModel(nn.Module):
         else:
             embedded = torch.stack([self.embeddings[i](x[:, :, i].unsqueeze(-1)) for i in range(self.num_components)], dim=1)
 
-        if torch.any(torch.isnan(x)):
-            print("X has nons")
-        if torch.any(torch.isnan(embedded)):
-            print("embedded has nons")
         
         # Initialize hidden state
         h_0 = torch.zeros(B, 1, self.num_components, self.hidden_dim, device=x.device)
-        torch.save(h_0, savepath+"h_init.pt")
 
         mixing_matrices = []
         hidden_states = []
@@ -226,9 +219,7 @@ class MultivariateTSModel(nn.Module):
             # Apply self-attention
             h_0, mixing_matrix = self.attention(h_0_reshaped)
             hidden_states.append(h_0)
-            # Update h_0 with attention output
             h_0 = h_0.unsqueeze(1)
-            # h_0_attn.append(h_0)
 
             mixing_matrices.append(mixing_matrix)
             # hid_states.append(h_0)
@@ -245,11 +236,21 @@ class MultivariateTSModel(nn.Module):
         if pretraining:
             return mixing_matrices, predicted, orig_x[:, 1:, :]
         
+        ### calculate weights based on prediction error
+        mse_errors = F.mse_loss(predicted, orig_x[:, 1:, :], reduction='none')
+        # scales = orig_x[:, 1:, :]*orig_x[:, 1:, :]
+        # scaled_errors = mse_errors/scales #[batch_size; time_length-1; num_components]
+        scaled_errors = mse_errors #[batch_size; time_length-1; num_components]
+        scaled_errors = scaled_errors.mean(dim=-1) #[batch_size; time_length-1]
+        weights = F.softmax(scaled_errors, dim=1)
+        weights = weights.reshape(*weights.shape, 1) #[batch_size; time_length-1, 1]
+        ###
+        
         GTA_input = mixing_matrices.reshape(B, T, -1) # [batch_size; time_length; num_components * num_components]
         DNC_flat = torch.mean(GTA_input, dim=1)
         
-        logits = self.clf(GTA_input)
-        logits = torch.mean(logits, dim=1) # mean over time
+        logits = self.clf(GTA_input[:, :-1, :]) #[batch_size; time_length-1, n_classes]
+        logits = torch.sum(logits * weights, dim=1)
         # logits.shape: [batch_size; n_classes]
         
         # Reconstruct the next time points
