@@ -7,16 +7,16 @@ from torch import nn
 import torch.nn.functional as F
 
 from omegaconf import OmegaConf, DictConfig
-
+from src.settings import WEIGHTS_ROOT
 
 def get_model(cfg: DictConfig, model_cfg: DictConfig):
     model = glassDBN(model_cfg)
     if model_cfg.load_pretrained == True:
         if cfg.dataset.data_info.main.data_shape[2] == 53:
-            path = "/data/users2/ppopov1/glass_proj/assets/model_weights/DBNglassFIX_ukb.pt"
+            path = WEIGHTS_ROOT.joinpath("DBNglassFIX_ukb.pt")
         elif cfg.dataset.data_info.main.data_shape[2] == 200:
             raise NotImplementedError(f"Model wasn't pretrained for the Schaefer 200 ROIs data")
-            path = "/data/users2/ppopov1/glass_proj/assets/model_weights/DBNglassFIX_hcp_roi_752.pt"
+            path = WEIGHTS_ROOT.joinpath("DBNglassFIX_hcp_roi_752.pt")
         else:
             raise NotImplementedError(f"Data shape {cfg.dataset.data_info.main.data_shape} does not match any known dimensions from the avilable datasets")
 
@@ -261,7 +261,7 @@ class SelfAttention(nn.Module):
         )
 
 
-    def forward(self, x): # x.shape (batch_size, n_components, input_dim)
+    def forward(self, x): # x.shape (batch_size, n_components, GRU hidden size)
         queries = self.query(x)
         keys = self.key(x)
 
