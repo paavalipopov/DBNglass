@@ -142,3 +142,5 @@ outputs/
 examples/images
 examples/roi_experiments
 examples/plots_data
+_error
+_out
