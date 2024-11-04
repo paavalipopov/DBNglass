@@ -1,10 +1,8 @@
 # pylint: disable=invalid-name, no-member, missing-function-docstring, too-many-branches, too-few-public-methods, unused-argument
-""" DICE model from https://github.com/UsmanMahmood27/DICE """
-from random import uniform, randint
+""" glassDBN model """
 
 import torch
 from torch import nn
-import torch.nn.functional as F
 
 from omegaconf import OmegaConf, DictConfig
 from src.settings import WEIGHTS_ROOT
@@ -12,19 +10,12 @@ from src.settings import WEIGHTS_ROOT
 def get_model(cfg: DictConfig, model_cfg: DictConfig):
     model = glassDBN(model_cfg)
     if model_cfg.load_pretrained == True:
-        if cfg.dataset.data_info.main.data_shape[2] == 53:
-            path = WEIGHTS_ROOT.joinpath("DBNglassFIX_ukb.pt")
-        elif cfg.dataset.data_info.main.data_shape[2] == 200:
-            raise NotImplementedError(f"Model wasn't pretrained for the Schaefer 200 ROIs data")
-            path = WEIGHTS_ROOT.joinpath("DBNglassFIX_hcp_roi_752.pt")
-        else:
-            raise NotImplementedError(f"Data shape {cfg.dataset.data_info.main.data_shape} does not match any known dimensions from the avilable datasets")
-
+        path = model_cfg.pretrained_path
         checkpoint = torch.load(
             path, map_location=lambda storage, loc: storage
         )
-        missing_keys = ["gta", "clf"]
-        pruned_checkpoint = {k: v for k, v in checkpoint.items() if not any(bad_key in k for bad_key in missing_keys)}
+        dont_load = ["clf"]
+        pruned_checkpoint = {k: v for k, v in checkpoint.items() if not any(key in k for key in dont_load)}
         model.load_state_dict(pruned_checkpoint, strict=False)
 
     return model
@@ -105,6 +96,7 @@ def default_HPs(cfg: DictConfig):
         },
         "lr": 1e-4,
         "load_pretrained": True,
+        "pretrained_path": WEIGHTS_ROOT.joinpath("DBNglassFIX_ukb.pt"),
         "input_size": cfg.dataset.data_info.main.data_shape[2],
         "output_size": cfg.dataset.data_info.main.n_classes,
     }
