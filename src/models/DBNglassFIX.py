@@ -96,7 +96,7 @@ def default_HPs(cfg: DictConfig):
         },
         "lr": 1e-4,
         "load_pretrained": True,
-        "pretrained_path": WEIGHTS_ROOT.joinpath("DBNglassFIX_ukb.pt"),
+        "pretrained_path": str(WEIGHTS_ROOT.joinpath("DBNglassFIX_ukb.pt")),
         "input_size": cfg.dataset.data_info.main.data_shape[2],
         "output_size": cfg.dataset.data_info.main.n_classes,
     }
