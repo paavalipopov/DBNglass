@@ -74,11 +74,19 @@ class RegCEloss:
 
         rec_loss = self.rec_loss(reconstructed, originals)
         loss = ce_loss + self.lambdaa * sparse_loss + rec_loss
-        return loss
+        return loss, ce_loss, sparse_loss, rec_loss
     
 
 
 def default_HPs(cfg: DictConfig):
+    # thresholds = [0.01, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 1.0]
+    # threshold = thresholds[cfg.idx]
+
+    # if cfg.sparsity == True:
+    #     path = str(WEIGHTS_ROOT.joinpath(f"DBNglassFIX_ukb.pt"))
+    # else:
+    #     path = str(WEIGHTS_ROOT.joinpath(f"DBNglassFIX_ukb_no_sparisty.pt"))
+
     model_cfg = {
         "rnn": {
             "single_embed": True,
@@ -92,11 +100,14 @@ def default_HPs(cfg: DictConfig):
         "loss": {
             "minimize_global": False,
             "threshold": 0.01,
+            # "threshold": threshold,
             "lambdaa": 1.0,
         },
         "lr": 1e-4,
         "load_pretrained": True,
-        "pretrained_path": str(WEIGHTS_ROOT.joinpath("DBNglassFIX_ukb.pt")),
+        "pretrained_path": str(WEIGHTS_ROOT.joinpath(f"DBNglassFIX_ukb.pt")),
+        # "pretrained_path": str(WEIGHTS_ROOT.joinpath(f"DBNglassFIX_ukb_{cfg.idx}.pt")),
+        # "pretrained_path": path,
         "input_size": cfg.dataset.data_info.main.data_shape[2],
         "output_size": cfg.dataset.data_info.main.n_classes,
     }
@@ -223,10 +234,10 @@ class glassDBN(nn.Module):
         clf_input = mixing_matrices.reshape(B, T, -1) # [batch_size; time_length; input_size * input_size]
         mean_FNC = torch.mean(clf_input, dim=1).reshape(B, self.input_size, self.input_size)
         
-        logits = self.clf(clf_input) # [batch_size; time_length, n_classes]
-        logits = torch.mean(logits, dim=1) # mean over time, [batch_size; n_classes]
+        time_logits = self.clf(clf_input) # [batch_size; time_length, n_classes]
+        logits = torch.mean(time_logits, dim=1) # mean over time, [batch_size; n_classes]
         
-        return logits, mean_FNC, mixing_matrices, predicted, orig_x[:, 1:, :]
+        return logits, mean_FNC, mixing_matrices, time_logits, predicted, orig_x[:, 1:, :]
 
 
 
