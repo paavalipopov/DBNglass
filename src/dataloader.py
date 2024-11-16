@@ -8,7 +8,7 @@ from numpy.random import default_rng
 from sklearn.model_selection import StratifiedKFold, StratifiedShuffleSplit
 import torch
 from torch.utils.data import DataLoader, TensorDataset
-
+from omegaconf import open_dict
 
 def dataloader_factory(cfg, data, k, trial=None):
     """Return dataloader according to the used model"""
@@ -65,8 +65,8 @@ def common_dataloader(cfg, original_data, k, trial=None):
     split_data = {"train": {}, "valid": {}, "test": {}}
 
     # train/test split
-    split_data["train"], split_data["test"] = cross_validation_split(
-        data["main"], cfg.mode.n_splits, k
+    split_data["train"], split_data["test"], train_indices, test_indices = cross_validation_split(
+        data["main"], cfg.mode.n_splits, k, return_indices=True
     )
 
     # train/val split
@@ -86,6 +86,18 @@ def common_dataloader(cfg, original_data, k, trial=None):
             split_data["train"][key][train_index],
             split_data["train"][key][val_index],
         )
+
+    # finalize split and save to log
+    valid_indices = train_indices[val_index]
+    train_indices = train_indices[train_index]
+    split_indices = {
+        "train": train_indices.tolist(),
+        "valid": valid_indices.tolist(),
+        "test": test_indices.tolist(),
+    }
+    with open_dict(cfg):
+        cfg.dataset.split_info = split_indices
+    
 
     # shuffle training data time-wise
     if "permute" in cfg and cfg.permute == "Single":
@@ -131,7 +143,7 @@ def common_dataloader(cfg, original_data, k, trial=None):
     return dataloaders
 
 
-def cross_validation_split(data, n_splits, k):
+def cross_validation_split(data, n_splits, k, return_indices=False):
     """
     Split data into train and test data using StratifiedKFold.
     Input data should be dict
@@ -152,5 +164,8 @@ def cross_validation_split(data, n_splits, k):
             data[key][train_index],
             data[key][test_index],
         )
+
+    if return_indices:
+        return train_data, test_data, train_index, test_index
 
     return train_data, test_data

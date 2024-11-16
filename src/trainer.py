@@ -6,6 +6,7 @@ import os
 import time
 import warnings
 from pprint import pprint
+import math
 
 import torch
 from torch.utils.data import DataLoader
@@ -194,11 +195,13 @@ class BasicTrainer:
         is_train_dataset = ds_name == "train"
 
         all_scores, all_targets = [], []
-        total_loss, total_size = 0.0, 0
+        total_loss, total_ce_loss, total_sp_loss, total_pred_loss = 0.0, 0.0, 0.0, 0.0
 
         self.model.train(is_train_dataset)
         start_time = time.time()
 
+        n_samples = len(self.dataloaders[ds_name].dataset)
+        n_batches = math.ceil(n_samples / self.dataloaders[ds_name].batch_size)
         with torch.set_grad_enabled(is_train_dataset):
             for data, target in self.dataloaders[ds_name]:
                 # permute TS data if needed
@@ -207,15 +210,17 @@ class BasicTrainer:
                         data[i] = sample[rp(sample.shape[0]), :]
 
                 data, target = data.to(self.device), target.to(self.device)
-                total_size += data.shape[0]
 
-                logits, DNC, DNCs, reconstructed, originals = self.model(data)
-                loss = self.criterion(logits, target, self.model, self.device, DNC, DNCs, reconstructed, originals)
+                logits, DNC, DNCs, time_logits, reconstructed, originals = self.model(data)
+                loss, ce_loss, sparse_loss, rec_loss = self.criterion(logits, target, self.model, self.device, DNC, DNCs, reconstructed, originals)
                 score = torch.softmax(logits, dim=-1)
 
                 all_scores.append(score.cpu().detach().numpy())
                 all_targets.append(target.cpu().detach().numpy())
                 total_loss += loss.sum().item()
+                total_ce_loss += ce_loss.sum().item()
+                total_sp_loss += sparse_loss.sum().item()
+                total_pred_loss += rec_loss.sum().item()
 
                 if is_train_dataset:
                     self.optimizer.zero_grad()
@@ -223,11 +228,16 @@ class BasicTrainer:
                     self.optimizer.step()
                 elif ds_name == "test":
                     torch.save(target, f"{self.save_path}/labels.pt")
+                    torch.save(time_logits, f"{self.save_path}/time_logits.pt")
                     torch.save(DNC, f"{self.save_path}/DNC.pt")
                     torch.save(DNCs, f"{self.save_path}/DNCs.pt")
 
-        average_time = (time.time() - start_time) / total_size
-        average_loss = total_loss / total_size
+        average_inf_time = (time.time() - start_time) / n_samples
+        average_loss = total_loss / n_batches
+        average_ce_loss = total_ce_loss / n_batches
+        average_sp_loss = total_sp_loss / n_batches
+        average_pred_loss = total_pred_loss / n_batches
+
 
         y_test = np.hstack(all_targets)
         y_score = np.vstack(all_scores)
@@ -241,7 +251,10 @@ class BasicTrainer:
             ds_name + "_accuracy": report["precision"].loc["accuracy"],
             ds_name + "_score": report["auc"].loc["weighted"],
             ds_name + "_average_loss": average_loss,
-            ds_name + "_average_time": average_time,
+            ds_name + "_average_ce_loss": average_ce_loss,
+            ds_name + "_average_sp_loss": average_sp_loss,
+            ds_name + "_average_pred_loss": average_pred_loss,
+            ds_name + "_average_inf_time": average_inf_time,
         }
 
         return metrics
