@@ -4,11 +4,8 @@ defaults:
   - model: ???
   - dataset: ???
 
-use_additional_test_ds: False # if dataset and model allow,
-# test the trained model on compatible datasets. See 'mlp' and 'fbirn' configs for more info
-
 permute: None # (None, Single, Multiple) whether taining TS data should be suffled along time dimension
-single_HPs: False
+HP_path: null
 model_cfg_path: null # required if single_HPs is True in exp mode. full path to model config, 
 # if you want to override the src.model.get_best_config
 
@@ -16,7 +13,7 @@ resume: False # set to true if you want to resume an interrupted experiment (mus
 # wandb and project name
 prefix: null
 wandb_silent: True
-wandb_offline: False
+wandb_offline: True
 
 hydra:
   run:

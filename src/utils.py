@@ -29,24 +29,13 @@ def set_project_name(cfg: DictConfig):
             used_default_prefix = False
 
     model_name = cfg.model.name
-    if "default_HP" in cfg.model and cfg.model.default_HP:
-        if cfg.mode.name != "tune":
-            model_name += "_defHP"
 
     dataset_name = cfg.dataset.name
-    if "multiclass" in cfg.dataset and cfg.dataset.multiclass:
-        dataset_name += "_mc"
-    if "zscore" in cfg.dataset and cfg.dataset.zscore:
-        dataset_name += "_zSC"
-    if "filter_indices" in cfg.dataset and not cfg.dataset.filter_indices:
-        dataset_name += "_allIDC"
     if "tuning_holdout" in cfg.dataset and cfg.dataset.tuning_holdout:
         dataset_name += "_th"
 
     project_name = f"{prefix}-{cfg.mode.name}-{model_name}-{dataset_name}"
 
-    if "single_HPs" in cfg and cfg.single_HPs:
-        project_name += "-single_HPs"
     if "permute" in cfg:
         if cfg.permute != "None":
             project_name += f"-perm_{cfg.permute}"
@@ -98,14 +87,11 @@ def validate_config(cfg: DictConfig):
     Note: Some of the checks are repeated further in the code.
     """
     # if model is to use single set of HPs in EXP mode, you must provide path to .yaml or .json file
-    if "single_HPs" in cfg and cfg.single_HPs and cfg.mode.name == "exp":
-        assert (
-            cfg.model_cfg_path is not None
-        ), "You must spcify 'model_cfg_path' if single_HPs is set to True"
-        assert isinstance(cfg.model_cfg_path, str)
+    if "HP_path" in cfg and cfg.HP_path is not None and cfg.mode.name == "exp":
+        assert isinstance(cfg.HP_path, str), f"Provided path to model config ({cfg.HP_path}) isn't a string"
         assert os.path.isfile(
-            cfg.model_cfg_path
-        ), "Provided path to model config ({cfg.model_cfg_path}) is incorrect"
+            cfg.HP_path
+        ), f"Provided path to model config ({cfg.HP_path}) is incorrect"
 
     # shuffling the time points in the training samples is only allowed for TS input
     if "permute" in cfg:
@@ -115,11 +101,6 @@ def validate_config(cfg: DictConfig):
                 cfg.model.data_type == "TS"
             ), "Time permutation is not allowed for non-TS models"
 
-    # if model is specified as not tunable, abort tuning
-    # Note: tunable models must have random_HPs(cfg) function defined in their module
-    if cfg.mode.name == "tune":
-        if "tunable" in cfg.model:
-            assert cfg.model.tunable, "Model is specified as not tunable, aborting"
 
     # if you are using tuning_holdout for your dataset, make sure to provide tuning_split value.
     # in TUNE mode, 1/tuning_split of the dataset will be used for tuning,
