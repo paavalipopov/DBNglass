@@ -8,7 +8,7 @@ from numpy.random import default_rng
 from sklearn.model_selection import StratifiedKFold, StratifiedShuffleSplit
 import torch
 from torch.utils.data import DataLoader, TensorDataset
-from omegaconf import open_dict
+from omegaconf import open_dict, OmegaConf
 
 def dataloader_factory(cfg, data, k, trial=None):
     """Return dataloader according to the used model"""
@@ -64,36 +64,52 @@ def common_dataloader(cfg, original_data, k, trial=None):
     data = deepcopy(original_data)
     split_data = {"train": {}, "valid": {}, "test": {}}
 
-    # train/test split
-    split_data["train"], split_data["test"], train_indices, test_indices = cross_validation_split(
-        data["main"], cfg.mode.n_splits, k, return_indices=True
-    )
+    if "follow_splits" in cfg and cfg.follow_splits is not None:
+        # use the splits from the existing experiment's folder
+        split_cfg = OmegaConf.load(f"{cfg.follow_splits}/k_{k:02d}/trial_{trial:04d}/config.yaml")
+        train_indices, valid_indices, test_indices = list(split_cfg.dataset.split_info.train), list(split_cfg.dataset.split_info.valid), list(split_cfg.dataset.split_info.test)
 
-    # train/val split
-    splitter = StratifiedShuffleSplit(
-        n_splits=cfg.mode.n_trials,
-        test_size=split_data["train"]["labels"].shape[0] // cfg.mode.n_splits,
-        random_state=42,
-    )
-    tr_val_splits = list(
-        splitter.split(split_data["train"]["labels"], split_data["train"]["labels"])
-    )
-    train_index, val_index = (
-        tr_val_splits[0] if cfg.mode.name == "tune" else tr_val_splits[trial]
-    )
-    for key in split_data["train"]:
-        split_data["train"][key], split_data["valid"][key] = (
-            split_data["train"][key][train_index],
-            split_data["train"][key][val_index],
+        for key in data["main"]:
+            split_data["train"][key], split_data["valid"][key], split_data["test"][key] = (
+                data["main"][key][train_indices],
+                data["main"][key][valid_indices],
+                data["main"][key][test_indices],
+            )
+        
+    else:
+        # just split the data
+        # train/test split
+        split_data["train"], split_data["test"], train_indices, test_indices = cross_validation_split(
+            data["main"], cfg.mode.n_splits, k, return_indices=True
         )
 
-    # finalize split and save to log
-    valid_indices = train_indices[val_index]
-    train_indices = train_indices[train_index]
+        # train/val split
+        splitter = StratifiedShuffleSplit(
+            n_splits=cfg.mode.n_trials,
+            test_size=split_data["train"]["labels"].shape[0] // cfg.mode.n_splits,
+            random_state=42,
+        )
+        tr_val_splits = list(
+            splitter.split(split_data["train"]["labels"], split_data["train"]["labels"])
+        )
+        tr_index, val_index = (
+            tr_val_splits[0] if cfg.mode.name == "tune" else tr_val_splits[trial]
+        )
+        for key in split_data["train"]:
+            split_data["train"][key], split_data["valid"][key] = (
+                split_data["train"][key][tr_index],
+                split_data["train"][key][val_index],
+            )
+
+        # finalize split and save to log
+        valid_indices = train_indices[val_index].tolist()
+        train_indices = train_indices[tr_index].tolist()
+        test_indices = test_indices.tolist()
+
     split_indices = {
-        "train": train_indices.tolist(),
-        "valid": valid_indices.tolist(),
-        "test": test_indices.tolist(),
+        "train": train_indices,
+        "valid": valid_indices,
+        "test": test_indices,
     }
     with open_dict(cfg):
         cfg.dataset.split_info = split_indices
