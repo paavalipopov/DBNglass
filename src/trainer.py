@@ -25,7 +25,7 @@ warnings.filterwarnings("ignore")
 
 
 def trainer_factory(
-    cfg, model_cfg, dataloaders, model, criterion, optimizer, scheduler, logger
+    cfg, model_cfg, dataloaders, model, criterion, optimizer, scheduler
 ):
     """Trainer factory"""
     if "custom_trainer" not in cfg.model or not cfg.model.custom_trainer:
@@ -37,7 +37,6 @@ def trainer_factory(
             criterion,
             optimizer,
             scheduler,
-            logger,
         )
     else:
         try:
@@ -65,7 +64,6 @@ def trainer_factory(
             criterion,
             optimizer,
             scheduler,
-            logger,
         )
 
     return trainer
@@ -83,7 +81,6 @@ class BasicTrainer:
         criterion,
         optimizer,
         scheduler,
-        logger,
     ) -> None:
         self.cfg = cfg
         self.model_cfg = model_cfg
@@ -92,7 +89,6 @@ class BasicTrainer:
         self.criterion = criterion
         self.optimizer = optimizer
         self.scheduler = scheduler
-        self.logger = logger
 
         if "permute" in cfg and cfg.permute == "Multiple":
             self.permute = True
@@ -100,7 +96,6 @@ class BasicTrainer:
             self.permute = False
 
         params = self.count_params(self.model)
-        self.logger.summary["params"] = params
 
         self.epochs = self.cfg.mode.max_epochs
         self.save_path = self.cfg.run_dir
@@ -115,29 +110,20 @@ class BasicTrainer:
         if torch.cuda.is_available():
             # CUDA
             dev = "cuda:0"
-        elif torch.backends.mps.is_available() and torch.backends.mps.is_built():
-            # Apple Silicon's mps is too buggy, using cpu instead
-            # dev = "mps"
-            dev = "cpu"
         else:
             # CPU
             dev = "cpu"
         print(f"Used device: {dev}")
-        with open_dict(self.cfg):
-            self.cfg.device = dev
         self.device = torch.device(dev)
 
         self.model = model.to(self.device)
 
-        # log configs
-        self.logger.config.update(
-            {"general": OmegaConf.to_container(self.cfg, resolve=True)}
-        )
-        self.logger.config.update(
-            {"model": OmegaConf.to_container(self.model_cfg, resolve=True)}
-        )
-
         # save configs in the run's directory
+        with open_dict(self.cfg):
+            self.cfg.device = dev
+            self.cfg.params = params
+        with open_dict(self.model_cfg):
+            self.model_cfg.params = params
         with open(f"{self.save_path}/config.yaml", "w", encoding="utf8") as f:
             OmegaConf.save(self.cfg, f)
         with open(f"{self.save_path}/model_config.yaml", "w", encoding="utf8") as f:
@@ -223,9 +209,7 @@ class BasicTrainer:
                 total_pred_loss += rec_loss.sum().item()
 
                 if is_train_dataset:
-                    self.optimizer.zero_grad()
-                    loss.backward()
-                    self.optimizer.step()
+                    self.do_update(loss)
                 elif ds_name == "test":
                     torch.save(target, f"{self.save_path}/labels.pt")
                     torch.save(time_logits, f"{self.save_path}/time_logits.pt")
@@ -259,21 +243,40 @@ class BasicTrainer:
 
         return metrics
 
+    def do_update(self, loss):
+        """
+        Used to update weights once the loss is computed. It is moved here for easier inheritance
+        """
+        self.optimizer.zero_grad()
+        loss.backward()
+        self.optimizer.step()
+        if isinstance(self.scheduler, torch.optim.lr_scheduler.OneCycleLR):
+            self.scheduler.step()
+
     def train(self):
         """Start training"""
         start_time = time.time()
 
+        train_log_savepath = f"{self.save_path}/train_log.csv"
         train_results = []
         for epoch in tqdm(range(self.epochs)):
             # run train and valid dataloaders
             results = self.run_epoch("train")
             results.update(self.run_epoch("valid"))
+            results["epoch"] = epoch
 
             # save results
+            pd.DataFrame([results]).to_csv(
+                train_log_savepath,
+                mode="a",
+                header=not os.path.exists(train_log_savepath),
+                index=False,
+            )
             train_results.append(results)
 
             # update scheduler
-            self.scheduler.step(results["valid_average_loss"])
+            if not isinstance(self.scheduler, torch.optim.lr_scheduler.OneCycleLR):
+                self.scheduler.step(results["valid_average_loss"])
 
             # check early stopping criterion
             self.early_stopping(results["valid_average_loss"], self.model, epoch)
@@ -283,32 +286,7 @@ class BasicTrainer:
         if self.early_stopping.early_stop:
             print("EarlyStopping triggered")
 
-        # log train results
-        train_results = pd.DataFrame(train_results)
-        train_results["epoch"] = train_results.index
-        epoch = train_results.pop("epoch")
-        train_results.insert(0, "epoch", epoch)
-        train_results.to_csv(f"{self.save_path}/train_log.csv", index=False)
-
-        table = wandb.Table(dataframe=train_results)
-        self.logger.log(
-            {
-                "train_average_loss": wandb.plot.line(
-                    table, "epoch", "train_average_loss", title="train_average_loss"
-                )
-            }
-        )
-        self.logger.log(
-            {
-                "valid_average_loss": wandb.plot.line(
-                    table, "epoch", "valid_average_loss", title="valid_average_loss"
-                )
-            }
-        )
-        self.logger.log({"train_table": table})
-
         self.training_time = time.time() - start_time
-        self.logger.summary["training_time"] = self.training_time
 
     def test(self):
         """Start testing"""
@@ -321,8 +299,6 @@ class BasicTrainer:
         # log test results
         test_results = pd.DataFrame(self.test_results, index=[0])
         test_results.to_csv(f"{self.save_path}/test_log.csv", index=False)
-
-        self.logger.log(self.test_results)
 
     def run(self):
         """Run training script"""

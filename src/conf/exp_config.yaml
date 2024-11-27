@@ -9,10 +9,7 @@ HP_path: null
 follow_splits: null
 
 resume: False # set to true if you want to resume an interrupted experiment (must provide a custom prefix)
-# wandb and project name
 prefix: null
-wandb_silent: True
-wandb_offline: True
 
 hydra:
   run:

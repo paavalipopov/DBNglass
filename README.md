@@ -10,33 +10,16 @@ conda install pytorch torchvision torchaudio pytorch-cuda=11.3 -c pytorch -c nvi
 pip install -r requirements.txt
 ```
 
-# 2. Reproducing the results
-## 1. Figures 3 and 4: general and transfer classification comparisons
-```bash
-DATASETS=('fbirn' 'bsnip' 'cobre' 'abide_869' 'oasis' 'adni' 'hcp' 'ukb' 'ukb_age_bins' 'fbirn_roi' 'abide_roi' 'hcp_roi_752')
-MODELS=('mlp' 'lstm' 'pe_transformer' 'milc' 'dice' 'bnt' 'fbnetgen' 'brainnetcnn' 'lr')
-for dataset in "${DATASETS[@]}"; do 
-    for model in "${MODELS[@]}"; do 
-        PYTHONPATH=. python scripts/run_experiments.py mode=exp dataset=$dataset model=$model prefix=general ++model.default_HP=True
-    done; 
-done
-```
-## 2. Figures 5 and 6: reshuffling experiments and additional data pre-processing tests
-```bash
-DATASETS=('hcp' 'hcp_roi_752' 'hcp_schaefer' 'hcp_non_mni_2' 'hcp_mni_3' 'ukb')
-MODELS=('mlp' 'lstm' 'mean_lstm' 'pe_transformer' 'mean_pe_transformer')
-
-for model in "${MODELS[@]}"; do 
-    PYTHONPATH=. python scripts/run_experiments.py mode=exp dataset='hcp_time' model=$model prefix=additional ++model.default_HP=True
-    for dataset in "${DATASETS[@]}"; do 
-        PYTHONPATH=. python scripts/run_experiments.py mode=exp dataset=$dataset model=$model prefix=additional ++model.default_HP=True
-        PYTHONPATH=. python scripts/run_experiments.py mode=exp dataset=$dataset model=$model prefix=additional ++model.default_HP=True permute=Multiple
-    done; 
-done
-```
-## 3. Plotting the results
-Plotting scripts can be found at `scripts/plot_figures.ipynb`.
-Data loading scripts rely on fetching the results from WandB. If you set WandB offline mode while running the experiments, you'll need to load the csv files from the experiment folders in `assets/logs`.
+## Optional
+- `prefix`: custom prefix for the project
+    - default prefix is UTC time
+    - appears in the name of logs directory and the name of WandB project
+    - `exp` mode runs with custom prefix will use HPs from `tune` mode runs with the same prefix
+        - unless model.default_HP is set to `True`
+- `permute`: whether TS models should be trained on time-reshuffled data
+    - set to `permute=Multiple` to permute
+- `HP_path`: path to custom hyperparams to load
+- `follow_splits`: path to an experiment which splist you want to replicate
 
 
 # `scripts/run_experiments.py` options:
@@ -62,6 +45,7 @@ Data loading scripts rely on fetching the results from WandB. If you set WandB o
 
 - `dataset`: dataset for the experiments. Datasets' config files can be found at `src/conf/dataset`, and their loading scripts are located at `src/datasets`.
     - `fbirn` - ICA FBIRN dataset
+    - `fbirn_sex` - ICA FBIRN dataset wtih sex labels
     - `cobre` - ICA COBRE dataset
     - `bsnip` - ICA BSNIP dataset
     - `abide` - ICA ABIDE dataset (not used in the paper)
@@ -80,15 +64,3 @@ Data loading scripts rely on fetching the results from WandB. If you set WandB o
     - `hcp_mni_3` - Deskian/Killiany ROIs HCP dataset in MNI space
     - `hcp_schaefer` - Noisy Schaefer 200 ROIs HCP dataset
     - `hcp_time` - ICA HCP dataset with normal/inversed time direcion
-
-## Optional
-- `prefix`: custom prefix for the project
-    - default prefix is UTC time
-    - appears in the name of logs directory and the name of WandB project
-    - `exp` mode runs with custom prefix will use HPs from `tune` mode runs with the same prefix
-        - unless model.default_HP is set to `True`
-- `permute`: whether TS models should be trained on time-reshuffled data
-    - set to `permute=Multiple` to permute
-- `wandb_silent`: whether wandb logger should run silently (default: `True`)
-- `wandb_offline`: whether wandb logger should only log results locally (default: `False`)
-

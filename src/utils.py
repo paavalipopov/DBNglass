@@ -49,33 +49,28 @@ def set_project_name(cfg: DictConfig):
 
 
 def set_run_name(cfg: DictConfig, outer_k=None, trial=None, inner_k=None):
-    """set wandb run name and run directories"""
+    """set run directories"""
     if cfg.mode.name == "tune":
         if ("single_HP" in cfg and cfg.single_HP) or (
             "tuning_holdout" in cfg.dataset and cfg.dataset.tuning_holdout
         ):
             # if cfg.single_HP or cfg.dataset.tuning_holdout are True,
             # we are looking for a single optimal set of HPs
-            wandb_trial_name = f"trial_{trial:04d}-k_{inner_k:02d}"
             k_dir = f"{cfg.project_dir}"
         else:
-            wandb_trial_name = f"k_{outer_k:02d}-trial_{trial:04d}-k_{inner_k:02d}"
             k_dir = f"{cfg.project_dir}/k_{outer_k:02d}"
 
         trial_dir = f"{k_dir}/trial_{trial:04d}"
         run_dir = f"{trial_dir}/k_{inner_k:02d}"
         with open_dict(cfg):
-            cfg.wandb_trial_name = wandb_trial_name
             cfg.k_dir = k_dir
             cfg.trial_dir = trial_dir
             cfg.run_dir = run_dir
 
     elif cfg.mode.name == "exp":
-        wandb_trial_name = f"k_{outer_k:02d}-trial_{trial:04d}"
         k_dir = f"{cfg.project_dir}/k_{outer_k:02d}"
         run_dir = f"{k_dir}/trial_{trial:04d}"
         with open_dict(cfg):
-            cfg.wandb_trial_name = wandb_trial_name
             cfg.k_dir = k_dir
             cfg.run_dir = run_dir
 

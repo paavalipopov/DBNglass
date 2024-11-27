@@ -16,7 +16,6 @@ from src.data import data_factory, data_postfactory
 from src.dataloader import dataloader_factory, cross_validation_split
 from src.model import model_config_factory, model_factory
 from src.model_utils import criterion_factory, optimizer_factory, scheduler_factory
-from src.logger import logger_factory
 from src.trainer import trainer_factory
 
 
@@ -26,10 +25,6 @@ def start(cfg: DictConfig):
 
     # check if config is correct
     validate_config(cfg)
-
-    # set wandb environment
-    os.environ["WANDB_SILENT"] = "true" if cfg.wandb_silent else "false"
-    os.environ["WANDB_MODE"] = "offline" if cfg.wandb_offline else "online"
 
     # set project name and directory
     set_project_name(cfg)
@@ -241,7 +236,6 @@ def run_trial(cfg, model_cfg, dataloaders):
     criterion = criterion_factory(cfg, model_cfg)
     optimizer = optimizer_factory(cfg, model_cfg, model)
     scheduler = scheduler_factory(cfg, model_cfg, optimizer)
-    logger = logger_factory(cfg, model_cfg)
 
     trainer = trainer_factory(
         cfg,
@@ -251,11 +245,9 @@ def run_trial(cfg, model_cfg, dataloaders):
         criterion,
         optimizer,
         scheduler,
-        logger,
     )
 
     results = trainer.run()
-    logger.finish()
 
     return results
 
