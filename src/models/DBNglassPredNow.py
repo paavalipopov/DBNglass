@@ -22,7 +22,68 @@ def get_model(cfg: DictConfig, model_cfg: DictConfig):
         model.load_state_dict(pruned_checkpoint, strict=False)
 
     return model
+    
 
+def default_HPs(cfg: DictConfig):
+    pretrained = cfg.pretrained
+
+    if pretrained:
+        if cfg.weights == 0:
+            path = str(WEIGHTS_ROOT.joinpath(f"DBNglassPredNow_ukb_check.pt"))
+        else:
+            path = str(WEIGHTS_ROOT.joinpath(f"DBNglassPredNow_ukb_lr_3.pt"))
+    else:
+        path = None
+
+    model_cfg = {
+        "rnn": {
+            "single_embed": True,
+            "num_layers": 1,
+            "input_embedding_size": 16,
+            "hidden_size": 16,
+        },
+        "attention": {
+            "hidden_dim": 16,
+        },
+        "loss": {
+            "threshold": 0.01,
+            "sp_weight": 1.0,
+            "pred_weight": 1.0,
+        },
+        "lr": 1e-4,
+        # "load_pretrained": True,
+        "load_pretrained": pretrained,
+        # "pretrained_path": str(WEIGHTS_ROOT.joinpath(f"DBNglassFIX_ukb.pt")),
+        # "pretrained_path": str(WEIGHTS_ROOT.joinpath(f"DBNglassFIX_ukb_{cfg.idx}.pt")),
+        "pretrained_path": path,
+        "input_size": cfg.dataset.data_info.main.data_shape[2],
+        "output_size": cfg.dataset.data_info.main.n_classes,
+    }
+    return OmegaConf.create(model_cfg)
+
+
+def random_HPs(cfg: DictConfig, optuna_trial=None):
+    model_cfg = {
+        "rnn": {
+            "single_embed": True,
+            "num_layers": 1,
+            "input_embedding_size": optuna_trial.suggest_int("rnn.input_embedding_size", 4, 64),
+            "hidden_size": optuna_trial.suggest_int("rnn.hidden_embedding_size", 4, 128),
+        },
+        "attention": {
+            "hidden_dim": optuna_trial.suggest_int("attention.hidden_dim", 4, 64),
+        },
+        "loss": {
+            "minimize_global": False,
+            "threshold": 10 ** optuna_trial.suggest_float("loss.threshold", -2, -0.2),
+            "lambdaa": 10 ** optuna_trial.suggest_float("loss.threshold", -1, 1),
+        },
+        "lr": 10 ** optuna_trial.suggest_float("lr", -5, -3),
+        "load_pretrained": False,
+        "input_size": cfg.dataset.data_info.main.data_shape[2],
+        "output_size": cfg.dataset.data_info.main.n_classes,
+    }
+    return OmegaConf.create(model_cfg)
 
 class RegCEloss:
     """Cross-entropy loss with model regularization"""
@@ -53,14 +114,14 @@ class RegCEloss:
             }
             return loss, loss_components
         
-        else: # pretraining case
+        else:
             B, T, C, _ = DNCs.shape
             DNCs = DNCs.reshape(B*T, C, C)
             sparse_loss = self.sparsity_loss(DNCs)
 
             pred_loss = F.mse_loss(predicted, originals)
 
-            loss =  self.sp_weight * sparse_loss + self.pred_weight * pred_loss
+            loss = self.sp_weight * sparse_loss + self.pred_weight * pred_loss
 
             loss_components = {
                 "sp_loss": sparse_loss.item(),
@@ -91,72 +152,6 @@ class InvertedHoyerMeasure:
 
         return mean_loss
     
-
-def default_HPs(cfg: DictConfig):
-    # thresholds = [0.01, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 1.0]
-    # threshold = thresholds[cfg.idx]
-
-    pred_weights = [0, 0, 0.1, 0.1, 0.3, 0.3, 0.6, 0.6, 1, 1]
-    pred_weight = pred_weights[cfg.idx]
-
-    pretrained = cfg.pretrained
-
-    # if cfg.sparsity == True:
-    #     path = str(WEIGHTS_ROOT.joinpath(f"DBNglassFIX_ukb.pt"))
-    # else:
-    #     path = str(WEIGHTS_ROOT.joinpath(f"DBNglassFIX_ukb_no_sparisty.pt"))
-
-    model_cfg = {
-        "rnn": {
-            "single_embed": True,
-            "num_layers": 1,
-            "input_embedding_size": 16,
-            "hidden_size": 16,
-        },
-        "attention": {
-            "hidden_dim": 16,
-        },
-        "loss": {
-            "threshold": 0.01,
-            "sp_weight": 1.0,
-            "pred_weight": pred_weight,
-            # "pred_weight": 1.0,
-        },
-        "lr": 1e-4,
-        "load_pretrained": pretrained,
-        # "load_pretrained": True,
-        "pretrained_path": str(WEIGHTS_ROOT.joinpath(f"DBNglassFIX_ukb.pt")),
-        # "pretrained_path": str(WEIGHTS_ROOT.joinpath(f"DBNglassFIX_ukb_{cfg.idx}.pt")),
-        # "pretrained_path": path,
-        "input_size": cfg.dataset.data_info.main.data_shape[2],
-        "output_size": cfg.dataset.data_info.main.n_classes,
-    }
-    return OmegaConf.create(model_cfg)
-
-
-def random_HPs(cfg: DictConfig, optuna_trial=None):
-    model_cfg = {
-        "rnn": {
-            "single_embed": True,
-            "num_layers": 1,
-            "input_embedding_size": optuna_trial.suggest_int("rnn.input_embedding_size", 4, 64),
-            "hidden_size": optuna_trial.suggest_int("rnn.hidden_embedding_size", 4, 128),
-        },
-        "attention": {
-            "hidden_dim": optuna_trial.suggest_int("attention.hidden_dim", 4, 64),
-        },
-        "loss": {
-            "minimize_global": False,
-            "threshold": 10 ** optuna_trial.suggest_float("loss.threshold", -2, -0.2),
-            "lambdaa": 10 ** optuna_trial.suggest_float("loss.threshold", -1, 1),
-        },
-        "lr": 10 ** optuna_trial.suggest_float("lr", -5, -3),
-        "load_pretrained": False,
-        "input_size": cfg.dataset.data_info.main.data_shape[2],
-        "output_size": cfg.dataset.data_info.main.n_classes,
-    }
-    return OmegaConf.create(model_cfg)
-
 class glassDBN(nn.Module):
     def __init__(self, model_cfg: DictConfig):
         super(glassDBN, self).__init__()
@@ -200,7 +195,7 @@ class glassDBN(nn.Module):
 
         self.criterion = RegCEloss(model_cfg)
 
-    def compute_loss(self, logits, target, additional_outputs):
+    def compute_loss(self, additional_outputs, logits=None, target=None):
         loss, log = self.criterion(
             logits=logits, 
             target=target, 
@@ -266,7 +261,11 @@ class glassDBN(nn.Module):
         
         if pretraining:
             # pretrain on the input prediction task
-            return mixing_matrices, predicted, orig_x[:, 1:, :]
+            return {
+                "DNCs": mixing_matrices,
+                "predicted": predicted,
+                "originals": orig_x[:, :-1, :],
+            }
         
         clf_input = mixing_matrices.reshape(B, T, -1) # [batch_size; time_length; input_size * input_size]
         time_logits = self.clf(clf_input) # [batch_size; time_length, n_classes]
@@ -276,7 +275,8 @@ class glassDBN(nn.Module):
             "DNCs": mixing_matrices,
             "time_logits": time_logits,
             "predicted": predicted,
-            "originals": orig_x[:, 1:, :]
+            "originals": orig_x[:, :-1, :],
+            # "originals": orig_x[:, 1:, :],
         }
 
         return logits, additional_outputs

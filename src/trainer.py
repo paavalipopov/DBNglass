@@ -11,6 +11,7 @@ import math
 import torch
 from torch.utils.data import DataLoader
 from torch import nn, randperm as rp
+from torch.nn import functional as F
 import numpy as np
 import pandas as pd
 
@@ -19,13 +20,11 @@ from apto.utils.report import get_classification_report
 
 from omegaconf import OmegaConf, open_dict
 
-import wandb
-
 warnings.filterwarnings("ignore")
 
 
 def trainer_factory(
-    cfg, model_cfg, dataloaders, model, criterion, optimizer, scheduler
+    cfg, model_cfg, dataloaders, model, optimizer, scheduler
 ):
     """Trainer factory"""
     if "custom_trainer" not in cfg.model or not cfg.model.custom_trainer:
@@ -34,7 +33,6 @@ def trainer_factory(
             model_cfg,
             dataloaders,
             model,
-            criterion,
             optimizer,
             scheduler,
         )
@@ -61,13 +59,14 @@ def trainer_factory(
             model_cfg,
             dataloaders,
             model,
-            criterion,
             optimizer,
             scheduler,
         )
 
     return trainer
 
+def ce_wrapper(logits, target, trash):
+    return F.cross_entropy(logits, target), {}
 
 class BasicTrainer:
     """Basic training script"""
@@ -78,7 +77,6 @@ class BasicTrainer:
         model_cfg,
         dataloaders,
         model,
-        criterion,
         optimizer,
         scheduler,
     ) -> None:
@@ -86,10 +84,14 @@ class BasicTrainer:
         self.model_cfg = model_cfg
         self.dataloaders = dataloaders
         self.model = model
-        self.criterion = criterion
         self.optimizer = optimizer
         self.scheduler = scheduler
 
+        if "custom_criterion" not in cfg.model or not cfg.model.custom_criterion:
+            self.criterion = ce_wrapper
+        else:
+            self.criterion = self.model.compute_loss
+            
         if "permute" in cfg and cfg.permute == "Multiple":
             self.permute = True
         else:
@@ -181,7 +183,8 @@ class BasicTrainer:
         is_train_dataset = ds_name == "train"
 
         all_scores, all_targets = [], []
-        total_loss, total_ce_loss, total_sp_loss, total_pred_loss = 0.0, 0.0, 0.0, 0.0
+        total_loss = 0.0
+        loss_components = {} 
 
         self.model.train(is_train_dataset)
         start_time = time.time()
@@ -197,30 +200,27 @@ class BasicTrainer:
 
                 data, target = data.to(self.device), target.to(self.device)
 
-                logits, DNC, DNCs, time_logits, reconstructed, originals = self.model(data)
-                loss, ce_loss, sparse_loss, rec_loss = self.criterion(logits, target, self.model, self.device, DNC, DNCs, reconstructed, originals)
+                logits, additional_outputs = self.model(data)
+                loss, loss_logs = self.criterion(additional_outputs, logits, target)
+                for key, value in loss_logs.items():
+                    loss_components[key] = loss_components.get(key, 0.0) + value
                 score = torch.softmax(logits, dim=-1)
 
                 all_scores.append(score.cpu().detach().numpy())
                 all_targets.append(target.cpu().detach().numpy())
-                total_loss += loss.sum().item()
-                total_ce_loss += ce_loss.sum().item()
-                total_sp_loss += sparse_loss.sum().item()
-                total_pred_loss += rec_loss.sum().item()
+                total_loss += loss.item()
 
                 if is_train_dataset:
                     self.do_update(loss)
-                elif ds_name == "test":
-                    torch.save(target, f"{self.save_path}/labels.pt")
-                    torch.save(time_logits, f"{self.save_path}/time_logits.pt")
-                    torch.save(DNC, f"{self.save_path}/DNC.pt")
-                    torch.save(DNCs, f"{self.save_path}/DNCs.pt")
+                elif ds_name not in ["train", "valid"]:
+                    try:
+                        self.model.save_data(self.cfg, ds_name, data, target, additional_outputs)
+                    except:
+                        pass
 
-        average_inf_time = (time.time() - start_time) / n_samples
+        average_time = (time.time() - start_time) / n_samples
         average_loss = total_loss / n_batches
-        average_ce_loss = total_ce_loss / n_batches
-        average_sp_loss = total_sp_loss / n_batches
-        average_pred_loss = total_pred_loss / n_batches
+        loss_components = {key: value / n_batches for key, value in loss_components.items()}
 
 
         y_test = np.hstack(all_targets)
@@ -235,10 +235,8 @@ class BasicTrainer:
             ds_name + "_accuracy": report["precision"].loc["accuracy"],
             ds_name + "_score": report["auc"].loc["weighted"],
             ds_name + "_average_loss": average_loss,
-            ds_name + "_average_ce_loss": average_ce_loss,
-            ds_name + "_average_sp_loss": average_sp_loss,
-            ds_name + "_average_pred_loss": average_pred_loss,
-            ds_name + "_average_inf_time": average_inf_time,
+            ds_name + "_average_inf_time": average_time,
+            **{f"{ds_name}_{key}": value for key, value in loss_components.items()},
         }
 
         return metrics
@@ -316,6 +314,7 @@ class BasicTrainer:
         print("Testing trained model")
         self.test_results = {}
         self.test_results["training_time"] = self.training_time
+        self.test_results["params"] = self.cfg.params
         self.test()
         print("Test results:")
         pprint(self.test_results, indent=2)

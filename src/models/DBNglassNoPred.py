@@ -31,42 +31,22 @@ class RegCEloss:
         self.sparsity_loss = InvertedHoyerMeasure(threshold=model_cfg.loss.threshold)
 
         self.sp_weight = model_cfg.loss.sp_weight
-        self.pred_weight = model_cfg.loss.pred_weight
 
 
-    def __call__(self, logits, target, DNCs, predicted, originals):
-        if logits is not None and target is not None: # training case
-            ce_loss = F.cross_entropy(logits, target)
+    def __call__(self, logits, target, DNCs):
+        ce_loss = F.cross_entropy(logits, target)
 
-            B, T, C, _ = DNCs.shape
-            DNCs = DNCs.reshape(B*T, C, C)
-            sparse_loss = self.sparsity_loss(DNCs)
+        B, T, C, _ = DNCs.shape
+        DNCs = DNCs.reshape(B*T, C, C)
+        sparse_loss = self.sparsity_loss(DNCs)
 
-            pred_loss = F.mse_loss(predicted, originals)
+        loss = ce_loss + self.sp_weight * sparse_loss
 
-            loss = ce_loss + self.sp_weight * sparse_loss + self.pred_weight * pred_loss
-
-            loss_components = {
-                "ce_loss": ce_loss.item(),
-                "sp_loss": sparse_loss.item(),
-                "pred_loss": pred_loss.item(),
-            }
-            return loss, loss_components
-        
-        else: # pretraining case
-            B, T, C, _ = DNCs.shape
-            DNCs = DNCs.reshape(B*T, C, C)
-            sparse_loss = self.sparsity_loss(DNCs)
-
-            pred_loss = F.mse_loss(predicted, originals)
-
-            loss =  self.sp_weight * sparse_loss + self.pred_weight * pred_loss
-
-            loss_components = {
-                "sp_loss": sparse_loss.item(),
-                "pred_loss": pred_loss.item(),
-            }
-            return loss, loss_components
+        loss_components = {
+            "ce_loss": ce_loss.item(),
+            "sp_loss": sparse_loss.item(),
+        }
+        return loss, loss_components
 
 class InvertedHoyerMeasure:
     """Sparsity loss function based on Hoyer measure: https://jmlr.csail.mit.edu/papers/volume5/hoyer04a/hoyer04a.pdf"""
@@ -93,18 +73,7 @@ class InvertedHoyerMeasure:
     
 
 def default_HPs(cfg: DictConfig):
-    # thresholds = [0.01, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 1.0]
-    # threshold = thresholds[cfg.idx]
-
-    pred_weights = [0, 0, 0.1, 0.1, 0.3, 0.3, 0.6, 0.6, 1, 1]
-    pred_weight = pred_weights[cfg.idx]
-
     pretrained = cfg.pretrained
-
-    # if cfg.sparsity == True:
-    #     path = str(WEIGHTS_ROOT.joinpath(f"DBNglassFIX_ukb.pt"))
-    # else:
-    #     path = str(WEIGHTS_ROOT.joinpath(f"DBNglassFIX_ukb_no_sparisty.pt"))
 
     model_cfg = {
         "rnn": {
@@ -119,8 +88,6 @@ def default_HPs(cfg: DictConfig):
         "loss": {
             "threshold": 0.01,
             "sp_weight": 1.0,
-            "pred_weight": pred_weight,
-            # "pred_weight": 1.0,
         },
         "lr": 1e-4,
         "load_pretrained": pretrained,
@@ -204,9 +171,7 @@ class glassDBN(nn.Module):
         loss, log = self.criterion(
             logits=logits, 
             target=target, 
-            DNCs=additional_outputs["DNCs"], 
-            predicted=additional_outputs["predicted"],
-            originals=additional_outputs["originals"]
+            DNCs=additional_outputs["DNCs"],
         )
 
         return loss, log
@@ -266,7 +231,11 @@ class glassDBN(nn.Module):
         
         if pretraining:
             # pretrain on the input prediction task
-            return mixing_matrices, predicted, orig_x[:, 1:, :]
+            return {
+                "DNCs": mixing_matrices,
+                "predicted": predicted,
+                "originals": orig_x[:, 1:, :],
+            }
         
         clf_input = mixing_matrices.reshape(B, T, -1) # [batch_size; time_length; input_size * input_size]
         time_logits = self.clf(clf_input) # [batch_size; time_length, n_classes]

@@ -116,4 +116,4 @@ class MeanMLP(nn.Module):
             predictions = torch.argmax(logits, axis=-1)
             return fc_output, predictions
 
-        return logits
+        return logits, None
