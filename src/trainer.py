@@ -65,7 +65,7 @@ def trainer_factory(
 
     return trainer
 
-def ce_wrapper(logits, target, trash):
+def ce_wrapper(additional_outputs, logits, target):
     return F.cross_entropy(logits, target), {}
 
 class BasicTrainer:
@@ -201,7 +201,12 @@ class BasicTrainer:
                 data, target = data.to(self.device), target.to(self.device)
 
                 logits, additional_outputs = self.model(data)
-                loss, loss_logs = self.criterion(additional_outputs, logits, target)
+                loss, loss_logs = self.criterion(
+                    logits=logits,
+                    target=target,
+                    additional_outputs=additional_outputs
+                )
+                
                 for key, value in loss_logs.items():
                     loss_components[key] = loss_components.get(key, 0.0) + value
                 score = torch.softmax(logits, dim=-1)
