@@ -93,19 +93,6 @@ class InvertedHoyerMeasure:
     
 
 def default_HPs(cfg: DictConfig):
-    # thresholds = [0.01, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 1.0]
-    # threshold = thresholds[cfg.idx]
-
-    pred_weights = [0, 0, 0.1, 0.1, 0.3, 0.3, 0.6, 0.6, 1, 1]
-    pred_weight = pred_weights[cfg.idx]
-
-    pretrained = cfg.pretrained
-
-    # if cfg.sparsity == True:
-    #     path = str(WEIGHTS_ROOT.joinpath(f"DBNglassFIX_ukb.pt"))
-    # else:
-    #     path = str(WEIGHTS_ROOT.joinpath(f"DBNglassFIX_ukb_no_sparisty.pt"))
-
     model_cfg = {
         "rnn": {
             "single_embed": True,
@@ -119,15 +106,11 @@ def default_HPs(cfg: DictConfig):
         "loss": {
             "threshold": 0.01,
             "sp_weight": 1.0,
-            "pred_weight": pred_weight,
-            # "pred_weight": 1.0,
+            "pred_weight": 1.0,
         },
         "lr": 1e-4,
-        "load_pretrained": pretrained,
-        # "load_pretrained": True,
+        "load_pretrained": True,
         "pretrained_path": str(WEIGHTS_ROOT.joinpath(f"DBNglassFIX_ukb.pt")),
-        # "pretrained_path": str(WEIGHTS_ROOT.joinpath(f"DBNglassFIX_ukb_{cfg.idx}.pt")),
-        # "pretrained_path": path,
         "input_size": cfg.dataset.data_info.main.data_shape[2],
         "output_size": cfg.dataset.data_info.main.n_classes,
     }
@@ -200,7 +183,7 @@ class glassDBN(nn.Module):
 
         self.criterion = RegCEloss(model_cfg)
 
-    def compute_loss(self, logits, target, additional_outputs):
+    def compute_loss(self, additional_outputs, logits, target):
         loss, log = self.criterion(
             logits=logits, 
             target=target, 

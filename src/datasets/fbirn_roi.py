@@ -9,7 +9,7 @@ from src.settings import DATA_ROOT
 
 
 def load_data(
-    cfg: DictConfig,
+    cfg: DictConfig = None,
     dataset_path: str = DATA_ROOT.joinpath(
         "fbirn_roi/FBIRN_fMRI_200ShaeferAtlas_onlytimeserieszscored.npz"
     ),
