@@ -18,7 +18,7 @@ def get_model(cfg: DictConfig, model_cfg: DictConfig):
             path, map_location=lambda storage, loc: storage
         )
         dont_load = ["clf"]
-        pruned_checkpoint = {k: v for k, v in checkpoint.items() if not any(key in k for key in dont_load)}
+        pruned_checkpoint = {k: v for k, v in checkpoint.items() if not any(bad_key in k for bad_key in dont_load)}
         model.load_state_dict(pruned_checkpoint, strict=False)
 
     return model
@@ -38,8 +38,10 @@ def default_HPs(cfg: DictConfig):
             "pred_weight": 1.0,
         },
         "lr": 3e-4,
-        "load_pretrained": False,
-        "pretrained_path": None,
+        # "load_pretrained": False,
+        # "pretrained_path": None,
+        "load_pretrained": True,
+        "pretrained_path": f"/data/users2/ppopov1/glass_proj/assets/test_logs/pretrainingHS/run_ukb_2/best_model.pth",
         "input_size": cfg.dataset.data_info.main.data_shape[2],
         "output_size": cfg.dataset.data_info.main.n_classes,
     }
@@ -172,9 +174,12 @@ class BrainDynaMo(nn.Module):
 
         # Classifier
         self.clf = nn.Sequential(
-            nn.Linear(input_size**2, 32),
+            nn.Linear(input_size**2, input_size**2 // 2),
             nn.ReLU(),
-            nn.Linear(32, output_size),
+            nn.Dropout1d(p=0.3),
+            nn.Linear(input_size**2 // 2, input_size**2 // 4),
+            nn.ReLU(),
+            nn.Linear(input_size**2 // 4, output_size),
         )
         # Input predictor
         self.predictor = nn.Linear(hidden_dim, 1)
@@ -199,6 +204,9 @@ class BrainDynaMo(nn.Module):
         torch.save(target, f"{save_path}/{ds_name}_labels.pt")
         torch.save(additional_outputs["FNCs"], f"{save_path}/{ds_name}_FNCs.pt")
         torch.save(additional_outputs["time_logits"], f"{save_path}/{ds_name}_time_logits.pt")
+        if "holdout" in ds_name:
+            plot_combined_matrices(additional_outputs["FNCs"], f"{save_path}/{ds_name}_time_FNCs.png", n_samples=1)
+            plot_mean_matrices(additional_outputs["FNCs"], f"{save_path}/{ds_name}_mean_FNCs.png", n_samples=-1)
 
     def forward(self, x, pretraining=False):
         B, T, C = x.shape  # [batch_size, time_length, input_size]; self.input_size == C
@@ -315,3 +323,73 @@ class Gate(nn.Module):
         a = torch.sigmoid(h)
 
         return a
+
+import matplotlib.pyplot as plt
+import numpy as np
+def plot_combined_matrices(matrices, save_path, n_samples=5, n_time=5):
+    if n_samples == -1:
+         n_samples = matrices.shape[0]
+         
+    # Normalize the range for the seismic colormap to center around 0
+    abs_max = matrices[:n_samples, 50:(n_time+50)].abs().max().item()
+    vmin, vmax = -abs_max, abs_max  # Centering colormap around 0
+
+    # Determine the size of individual matrices
+    matrix_size = matrices[0, 0].shape[0]
+
+    # Create a large matrix to hold all the smaller matrices with padding
+    combined_matrix = np.full(
+        ((matrix_size + 1) * n_samples - 1, (matrix_size + 1) * n_time - 1),
+        0.1
+    )
+
+    for i in range(n_samples):
+        for j in range(n_time):
+            matrix = matrices[i, 50 + j].cpu().detach().numpy()  # Convert to NumPy
+            start_row = i * (matrix_size + 1)
+            start_col = j * (matrix_size + 1)
+            combined_matrix[start_row:start_row + matrix_size, start_col:start_col + matrix_size] = matrix
+
+    # Plot the combined matrix
+    # dpi=1
+    dpi=4
+    figsize = combined_matrix.shape[1] * dpi, combined_matrix.shape[0] * dpi  # Match the figure size to the array dimensions (pixels)
+    fig = plt.figure(figsize=figsize, dpi=dpi)
+    ax = plt.Axes(fig, [0., 0., 1., 1.])
+    ax.set_axis_off()
+    fig.add_axes(ax)
+    ax.imshow(combined_matrix, cmap="seismic", vmin=vmin, vmax=vmax, interpolation='none')
+    plt.savefig(save_path, dpi=dpi)
+    plt.close()
+
+def plot_mean_matrices(matrices, save_path, n_samples=5):
+    ### also plot mean-over-time matrices ###
+    if n_samples == -1:
+         n_samples = matrices.shape[0]
+    # Calculate the mean over time for each sample
+    mean_matrices = matrices[:n_samples].mean(dim=1)
+
+    # Normalize the range for the seismic colormap to center around 0
+    abs_max = mean_matrices.abs().max().item()
+    vmin, vmax = -abs_max, abs_max  # Centering colormap around 0
+
+    matrix_size = matrices[0, 0].shape[0]
+    combined_matrix = np.full(
+        ((matrix_size + 1) * n_samples - 1, matrix_size),
+        0.1
+    )
+    for i in range(n_samples):
+            matrix = mean_matrices[i].cpu().detach().numpy()  # Convert to NumPy
+            start_row = i * (matrix_size + 1)
+            combined_matrix[start_row:start_row + matrix_size, :] = matrix
+            
+    # Plot the combined matrix
+    dpi=4
+    figsize = combined_matrix.shape[1] * dpi, combined_matrix.shape[0] * dpi  # Match the figure size to the array dimensions (pixels)
+    fig = plt.figure(figsize=figsize, dpi=dpi)
+    ax = plt.Axes(fig, [0., 0., 1., 1.])
+    ax.set_axis_off()
+    fig.add_axes(ax)
+    ax.imshow(combined_matrix, cmap="seismic", vmin=vmin, vmax=vmax, interpolation='none')
+    plt.savefig(save_path, dpi=dpi)
+    plt.close()
