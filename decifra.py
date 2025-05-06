@@ -9,7 +9,7 @@ from torch.nn import functional as F
 
 from omegaconf import OmegaConf, DictConfig
 
-def default_HPs(cfg: DictConfig):
+def default_HPs(input_size, n_classes):
     model_cfg = {
         "rnn": {
             "input_embedding_size": 16,
@@ -26,12 +26,12 @@ def default_HPs(cfg: DictConfig):
         "lr": 1e-4,
         "load_pretrained": False,
         "pretrained_path": None,
-        "input_size": cfg.dataset.data_info.main.data_shape[2],
-        "output_size": cfg.dataset.data_info.main.n_classes,
+        "input_size": input_size, # input feature size at each time point
+        "output_size": n_classes,
     }
     return OmegaConf.create(model_cfg)
 
-def get_model(cfg: DictConfig, model_cfg: DictConfig):
+def get_model(model_cfg: DictConfig):
     model = DECIFRA(model_cfg)
     if model_cfg.load_pretrained:
         assert model_cfg.pretrained_path is not None, "Error while loading model, load_pretrained is True, yet pretrained path is not set in the config."
@@ -116,7 +116,6 @@ class DECIFRA(nn.Module):
         self.embedding_dim = embedding_dim = model_cfg.rnn.input_embedding_size # embedding size for GRU input
         self.hidden_dim = hidden_dim = model_cfg.rnn.hidden_size # GRU hidden dim
         output_size = model_cfg.output_size # n_classes to predict
-        self.single_embed = model_cfg.rnn.single_embed # whether all time series should be embedded with the same vector or not
 
         # GRU and its input embedding
         self.embeddings = nn.Linear(1, embedding_dim)
