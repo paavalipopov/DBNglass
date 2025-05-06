@@ -1,0 +1,15 @@
+apto
+h5py
+path
+wandb
+tqdm
+pylint
+captum
+matplotlib==3.6.3
+ipykernel
+hydra-core
+seaborn
+statannot
+torch 
+torchvision 
+torchaudio
